@@ -38,17 +38,16 @@ def tap_key(code, stop):
         user32.keybd_event(code, 0, 0x0002, 0)
 
 
-def collect_fish(stop, duration=1.2):
-    if stop.is_set() or not roblox_active():
-        return
-    user32.keybd_event(0x54, 0, 0, 0)
-    try:
-        import time
-        deadline = time.monotonic()+duration
-        while not stop.is_set() and roblox_active() and time.monotonic() < deadline:
-            stop.wait(min(.03, max(0, deadline-time.monotonic())))
-    finally:
-        user32.keybd_event(0x54, 0, 0x0002, 0)
+class CollectKey:
+    def __init__(self):
+        self.held = False
+
+    def hold(self, value):
+        if value and not roblox_active():
+            value = False
+        if value != self.held:
+            user32.keybd_event(0x54, 0, 0 if value else 0x0002, 0)
+            self.held = value
 
 
 def cursor_position():

@@ -8,34 +8,31 @@ if sys.platform == 'win32':
 
 @unittest.skipUnless(sys.platform == 'win32', 'Windows input adapter')
 class KeyTests(unittest.TestCase):
-    def simulate(self, cancelled=False, loses_focus=False):
-        class Stop:
-            now = 0.0
+    def test_hold_is_continuous_until_explicit_release(self):
+        with patch.object(windows.user32, 'keybd_event') as key, patch.object(windows, 'roblox_active', return_value=True):
+            held = windows.CollectKey()
+            for _ in range(100):
+                held.hold(True)
+            self.assertTrue(held.held)
+            self.assertEqual(len(key.call_args_list), 1)
+            held.hold(False)
+            held.hold(False)
+            self.assertFalse(held.held)
+            self.assertEqual([call.args for call in key.call_args_list], [(0x54, 0, 0, 0), (0x54, 0, 2, 0)])
 
-            def is_set(self):
-                return cancelled
+    def test_inactive_game_prevents_key_press(self):
+        with patch.object(windows.user32, 'keybd_event') as key, patch.object(windows, 'roblox_active', return_value=False):
+            held = windows.CollectKey()
+            held.hold(True)
+            self.assertFalse(held.held)
+            key.assert_not_called()
 
-            def wait(self, seconds):
-                self.now += seconds
-
-        stop = Stop()
-        with patch.object(windows.user32, 'keybd_event') as key, \
-             patch.object(windows, 'roblox_active', side_effect=lambda: not loses_focus or stop.now < .06), \
-             patch('time.monotonic', side_effect=lambda: stop.now):
-            windows.collect_fish(stop, 2)
-            return stop.now, key.call_args_list
-
-    def test_holds_t_for_configured_time_and_releases(self):
-        elapsed, calls = self.simulate()
-        self.assertAlmostEqual(elapsed, 2)
-        self.assertEqual([call.args for call in calls], [(0x54, 0, 0, 0), (0x54, 0, 2, 0)])
-
-    def test_stop_prevents_key_press(self):
-        elapsed, calls = self.simulate(cancelled=True)
-        self.assertEqual(elapsed, 0)
-        self.assertEqual(calls, [])
-
-    def test_focus_loss_releases_t_early(self):
-        elapsed, calls = self.simulate(loses_focus=True)
-        self.assertLess(elapsed, .1)
-        self.assertEqual(calls[-1].args, (0x54, 0, 2, 0))
+    def test_focus_loss_releases_t(self):
+        with patch.object(windows.user32, 'keybd_event') as key, patch.object(windows, 'roblox_active') as active:
+            held = windows.CollectKey()
+            active.return_value = True
+            held.hold(True)
+            active.return_value = False
+            held.hold(True)
+            self.assertFalse(held.held)
+            self.assertEqual(key.call_args.args, (0x54, 0, 2, 0))

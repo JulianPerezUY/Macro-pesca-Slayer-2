@@ -13,7 +13,7 @@ class CollectPrompt:
     def __init__(self):
         base = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent.parent))
         self.templates = []
-        for name in ('collect_t.png', 'collect_t_glow.png'):
+        for name in ('collect_t.png', 'collect_t_glow.png', 'collect_t_holding.png'):
             template = cv2.imread(str(base/'assets'/name))
             if template is None:
                 raise RuntimeError('Falta la imagen de referencia del aviso T.')

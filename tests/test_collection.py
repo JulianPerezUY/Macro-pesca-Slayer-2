@@ -1,9 +1,30 @@
 import unittest
-from fishing.collection import ReelGate
+from fishing.collection import ReelGate, CollectionTracker
 from fishing.scene import manual_target
 
 
 class CollectionTests(unittest.TestCase):
+    def test_receipt_finishes_holding_immediately(self):
+        tracker = CollectionTracker(0)
+        self.assertIsNone(tracker.update(False, True, 1))
+        self.assertEqual(tracker.update(True, False, 2), 'received')
+
+    def test_holding_animation_cannot_end_collection_early(self):
+        tracker = CollectionTracker(0)
+        for t in (1, 2, 3, 4, 5):
+            self.assertIsNone(tracker.update(False, False, t))
+        self.assertEqual(tracker.update(True, False, 5.5), 'received')
+
+    def test_no_fixed_hold_duration_when_prompt_remains(self):
+        tracker = CollectionTracker(0)
+        for t in range(1, 61):
+            self.assertIsNone(tracker.update(False, True, t))
+        self.assertEqual(tracker.update(True, False, 61), 'received')
+
+    def test_empty_result_can_continue_without_fake_receipt(self):
+        tracker = CollectionTracker(0)
+        self.assertEqual(tracker.update(False, False, 6), 'empty')
+
     def test_early_prompt_does_not_collect(self):
         gate = ReelGate(0, delay=4)
         self.assertFalse(gate.update((.5, .5), 1))
