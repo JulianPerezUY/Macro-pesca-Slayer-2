@@ -17,6 +17,7 @@ from fishing.receipt import ReceiptDetector
 from fishing.windows import Mouse, roblox_active, key_down, game_rect, unlock_cursor, aim_at, cursor_position
 
 ctypes.windll.user32.SetProcessDPIAware()
+COLLECT_DELAY = 2.0
 SETTINGS = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Slayer2Fishing' / 'settings.json'
 
 
@@ -127,6 +128,7 @@ class App:
             missing_since = None
             last_preview = 0.0
             last_prompt_poll = 0.0
+            prompt_first_seen = None
             while not self.stop.is_set():
                 now = time.monotonic()
                 if not roblox_active():
@@ -136,6 +138,7 @@ class App:
                     missing_since = None
                     if state == 'holding':
                         state = 'collect'
+                    prompt_first_seen = None
                     self.events.put('Pausado: enfocá Roblox para continuar.')
                     # Suspend timers and reset input when returning to the game.
                     self.stop.wait(.25)
@@ -149,6 +152,7 @@ class App:
                     if state == 'holding':
                         state = 'collect'
                     deadline += .1
+                    prompt_first_seen = None
                     self.stop.wait(.1)
                     continue
                 left, top, right, bottom = automatic_region(width, height)
@@ -176,6 +180,7 @@ class App:
                         deadline = now+120
                     if now - missing_since >= .8:
                         state = 'collect'
+                        prompt_first_seen = None
                         self.events.put('Esperando el cartel T para recoger con clic mantenido…')
                 elif state == 'prepare':
                     if auto_aim:
@@ -225,6 +230,12 @@ class App:
                         elif state == 'collect':
                             position = prompt.locate(scene)
                             if position is not None:
+                                observed = time.monotonic()
+                                if prompt_first_seen is None:
+                                    prompt_first_seen = observed
+                                    self.events.put('Cartel T detectado. Esperando 2 segundos antes de recoger…')
+                                if observed-prompt_first_seen < COLLECT_DELAY:
+                                    continue
                                 bounds = self.window_bounds
                                 excluded = (bounds[0]-x, bounds[1]-y, bounds[2]-x, bounds[3]-y)
                                 try:

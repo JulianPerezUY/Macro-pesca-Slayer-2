@@ -37,6 +37,7 @@ class LoopTests(unittest.TestCase):
                 self.held = value
                 if value and game.phase in ('ready', 'awarded'):
                     game.phase = 'casting'
+                    game.prompt_since = None
                     game.casts += 1
                 elif not value and game.phase == 'casting':
                     game.phase, game.stamp = 'waiting', clock.now
@@ -47,6 +48,7 @@ class LoopTests(unittest.TestCase):
             def hold(self, value):
                 if value and not self.held:
                     assert game.aim == (960, 506)
+                    assert clock.now-game.prompt_since >= main.COLLECT_DELAY
                     game.presses += 1
                     game.phase, game.stamp = 'holding', clock.now
                 if not value and self.held and (game.awarded or empty):
@@ -91,7 +93,13 @@ class LoopTests(unittest.TestCase):
              patch.object(main, 'ReceiptDetector') as receipt, patch.object(main, 'CollectPrompt') as prompt, \
              patch.object(main.time, 'monotonic', side_effect=lambda: clock.now):
             receipt.return_value.visible.side_effect = received
-            prompt.return_value.locate.side_effect = lambda _, **kwargs: (.5, .5) if game.phase == 'collect' or (game.phase == 'holding' and (not empty or clock.now-game.stamp < .5)) else None
+            def locate(_, **kwargs):
+                if game.phase == 'collect':
+                    if game.prompt_since is None:
+                        game.prompt_since = clock.now
+                    return (.5, .5)
+                return None
+            prompt.return_value.locate.side_effect = locate
             app.run(False, .3, 5, False, (.5, .4))
         self.assertEqual(game.catches, 1 if empty else 3)
         self.assertEqual(game.casts, 1 if empty else 3)

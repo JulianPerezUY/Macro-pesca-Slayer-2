@@ -1,6 +1,6 @@
 # Macro de pesca · Slayer 2
 
-Aplicación de escritorio para Windows en Python. Lanza la caña con clic izquierdo, detecta la zona verde/amarilla y el cuadrado blanco de la barra, y mantiene o suelta el clic para seguir la zona. Cuando desaparece el minijuego, mantiene clic sobre el cartel T en cuanto aparece el aviso, apuntando una sola vez y dejando fijo el cursor, sin un tiempo fijo hasta detectar el aviso de objeto recibido con cantidad (`x1`) y espera 2,5 segundos para volver a lanzar. No mueve al personaje.
+Aplicación de escritorio para Windows en Python. Lanza la caña con clic izquierdo, detecta la zona verde/amarilla y el cuadrado blanco de la barra, y mantiene o suelta el clic para seguir la zona. Cuando desaparece el minijuego, espera 2 segundos desde que aparece el cartel T y mantiene clic sobre él, apuntando una sola vez y dejando fijo el cursor, sin un tiempo fijo hasta detectar el aviso de objeto recibido con cantidad (`x1`) y espera 2,5 segundos para volver a lanzar. No mueve al personaje.
 
 ## Uso
 
@@ -29,7 +29,7 @@ Los binarios generados se excluyen de Git. El workflow de GitHub Actions compila
 
 ## Alcance de la primera versión
 
-La mecánica del clic y los tiempos necesitan una prueba dentro del juego. El macro no lee el porcentaje: sigue la barra hasta que desaparece; la recogida se activa después de que termina la barra. No distingue los resultados por el porcentaje. En cuanto aparece el cartel T después del minijuego, coloca el cursor sobre él una única vez y mantiene el botón izquierdo. Durante la recogida no sigue el cartel, no mueve el cursor y no suelta ni reinicia el clic, aunque cambie el icono de carga. Solo el aviso de objeto recibido con cantidad (`x1`) habilita soltar el clic y volver a lanzar. La desaparición o movimiento del cartel no confirma una captura.
+La mecánica del clic y los tiempos necesitan una prueba dentro del juego. El macro no lee el porcentaje: sigue la barra hasta que desaparece; la recogida se activa después de que termina la barra. No distingue los resultados por el porcentaje. Cuando aparece el cartel T después del minijuego, espera 2 segundos para dar margen al acercamiento. Luego coloca el cursor sobre él una única vez y mantiene el botón izquierdo. Durante la recogida no sigue el cartel, no mueve el cursor y no suelta ni reinicia el clic, aunque cambie el icono de carga. Solo el aviso de objeto recibido con cantidad (`x1`) habilita soltar el clic y volver a lanzar. La desaparición o movimiento del cartel no confirma una captura.
 
 Si todavía no aparece el aviso o la cantidad, continúa esperando hasta detener el macro. Se trata de una confirmación visual del juego; no se consulta el inventario interno. El botón izquierdo se libera al perder el foco de Roblox, detener o cerrar la aplicación. Al volver a Roblox localiza de nuevo el cartel e inicia una nueva pulsación fija, porque la anterior se soltó durante la pausa. Si no aparece el minijuego dentro del tiempo de pique configurado, vuelve a lanzar; si no encuentra agua o la aplicación tapa el punto manual, espera y reintenta. Los errores de captura o del sistema pueden detenerlo con un mensaje.
 
