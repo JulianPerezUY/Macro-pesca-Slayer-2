@@ -9,6 +9,7 @@ user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
 user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
 user32.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
 user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
+user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
 
 
 def roblox_active():
@@ -37,8 +38,24 @@ def tap_key(code, stop):
         user32.keybd_event(code, 0, 0x0002, 0)
 
 
-def collect_fish(stop):
-    tap_key(0x54, stop)
+def collect_fish(stop, duration=1.2):
+    if stop.is_set() or not roblox_active():
+        return
+    user32.keybd_event(0x54, 0, 0, 0)
+    try:
+        import time
+        deadline = time.monotonic()+duration
+        while not stop.is_set() and roblox_active() and time.monotonic() < deadline:
+            stop.wait(min(.03, max(0, deadline-time.monotonic())))
+    finally:
+        user32.keybd_event(0x54, 0, 0x0002, 0)
+
+
+def cursor_position():
+    point = wintypes.POINT()
+    if not user32.GetCursorPos(ctypes.byref(point)):
+        raise OSError('No se pudo leer el punto manual.')
+    return point.x, point.y
 
 
 def unlock_cursor(stop):

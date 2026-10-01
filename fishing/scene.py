@@ -12,34 +12,44 @@ def white_mask(rgb):
 class CollectPrompt:
     def __init__(self):
         base = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent.parent))
-        template = cv2.imread(str(base/'assets'/'collect_t.png'))
-        if template is None:
-            raise RuntimeError('Falta la imagen de referencia del aviso T.')
-        self.template = white_mask(cv2.cvtColor(template, cv2.COLOR_BGR2RGB))
+        self.templates = []
+        for name in ('collect_t.png', 'collect_t_glow.png'):
+            template = cv2.imread(str(base/'assets'/name))
+            if template is None:
+                raise RuntimeError('Falta la imagen de referencia del aviso T.')
+            self.templates.append(white_mask(cv2.cvtColor(template, cv2.COLOR_BGR2RGB)))
 
     def visible(self, image):
+        return self.locate(image) is not None
+
+    def locate(self, image):
         rgb = np.asarray(image.convert('RGB'))
         h, w = rgb.shape[:2]
-        # Interaction prompts appear around the character, away from the HUD corners.
         left, top = round(w*.30), round(h*.18)
         crop = rgb[top:round(h*.80), left:round(w*.70)]
         mask = white_mask(crop)
-        for factor in (.8, 1., 1.2):
-            scale = h/1012*factor
-            tw, th = max(12, round(22*scale)), max(12, round(23*scale))
-            template = cv2.resize(self.template, (tw, th), interpolation=cv2.INTER_NEAREST)
-            if th >= mask.shape[0] or tw >= mask.shape[1]:
-                continue
-            score = cv2.matchTemplate(mask, template, cv2.TM_CCOEFF_NORMED)
-            _, maximum, _, point = cv2.minMaxLoc(score)
-            if maximum < .78:
-                continue
-            x, y = point
-            # The T must have a dark interaction label with white text to its right.
-            label = crop[y:y+th, x+tw:x+tw+round(65*scale)]
-            if label.size and (label.max(axis=2) < 110).mean() > .18 and (white_mask(label)>0).mean() > .025:
-                return True
-        return False
+        best = None
+        best_score = .78
+        for reference in self.templates:
+            for factor in (.8, .9, 1., 1.1, 1.2):
+                scale = h/1012*factor
+                tw, th = max(12, round(reference.shape[1]*scale)), max(12, round(reference.shape[0]*scale))
+                if th >= mask.shape[0] or tw >= mask.shape[1]:
+                    continue
+                template = cv2.resize(reference, (tw, th), interpolation=cv2.INTER_NEAREST)
+                scores = cv2.matchTemplate(mask, template, cv2.TM_CCOEFF_NORMED)
+                for _ in range(4):
+                    _, maximum, _, point = cv2.minMaxLoc(scores)
+                    if maximum < best_score:
+                        break
+                    x, y = point
+                    label = crop[y:y+th, x+tw:x+tw+round(65*scale)]
+                    if label.size and (label.max(axis=2) < 110).mean() > .18 and (white_mask(label)>0).mean() > .025:
+                        best = ((left+x+tw/2)/w, (top+y+th/2)/h)
+                        best_score = maximum
+                        break
+                    scores[max(0,y-th//2):y+th//2+1, max(0,x-tw//2):x+tw//2+1] = -1
+        return best
 
 
 def find_water(image, excluded=None):
@@ -65,3 +75,12 @@ def find_water(image, excluded=None):
         return None
     index = np.argmin((xs-160)**2 + (ys-68)**2)
     return round((xs[index]+.5)/320*w), round((ys[index]+.5)/180*h)
+
+
+def manual_target(width, height, point, excluded=None):
+    if point is None or len(point) != 2 or not all(0 < v < 1 for v in point):
+        raise ValueError('Elegí primero un punto de apuntado manual con F6.')
+    x, y = round(point[0]*width), round(point[1]*height)
+    if excluded and excluded[0] <= x <= excluded[2] and excluded[1] <= y <= excluded[3]:
+        raise ValueError('La aplicación está tapando el punto manual. Movela a un lado.')
+    return x, y

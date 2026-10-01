@@ -1,7 +1,7 @@
 name: Compilar Windows
 on:
   push:
-    branches: [feature/pesca]
+    branches: [feature/pesca, feature/apuntado-y-recoleccion]
   workflow_dispatch:
 permissions:
   contents: read
