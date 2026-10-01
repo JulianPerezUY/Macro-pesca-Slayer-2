@@ -8,7 +8,7 @@ if (-not (Test-Path '.venv/Scripts/python.exe')) {
 if ($LASTEXITCODE -ne 0) { throw 'No se pudieron instalar las dependencias.' }
 & '.venv/Scripts/python.exe' -m unittest discover -s tests
 if ($LASTEXITCODE -ne 0) { throw 'Fallaron las pruebas.' }
-& '.venv/Scripts/python.exe' -m PyInstaller --noconfirm --clean --onefile --windowed --name Slayer2Pesca main.py
+& '.venv/Scripts/python.exe' -m PyInstaller --noconfirm --clean --onefile --windowed --add-data 'assets;assets' --name Slayer2Pesca main.py
 if ($LASTEXITCODE -ne 0) { throw 'No se pudo generar el ejecutable.' }
 $smoke = Start-Process -FilePath '.\dist\Slayer2Pesca.exe' -ArgumentList '--smoke-test' -WindowStyle Hidden -PassThru -Wait
 if ($smoke.ExitCode -ne 0) { throw 'El ejecutable no pudo iniciar su interfaz.' }

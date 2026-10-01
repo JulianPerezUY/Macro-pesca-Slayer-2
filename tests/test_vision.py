@@ -1,10 +1,20 @@
 import unittest
+from pathlib import Path
 import numpy as np
 from PIL import Image
 from fishing.vision import detect
 
 
 class VisionTests(unittest.TestCase):
+    def test_real_tinted_square_from_video(self):
+        with Image.open(Path(__file__).parent/'fixtures'/'tinted_bar.png') as image:
+            result = detect(image)
+        self.assertIsNotNone(result)
+        self.assertGreater(result.cursor_height, .05)
+        self.assertLess(result.cursor_height, .08)
+        self.assertLess(result.target_top, result.cursor)
+        self.assertGreater(result.target_bottom, result.cursor)
+
     def frame(self, target=(87, 91, 32), scale=1):
         image = np.full((400*scale, 60*scale, 3), (25, 45, 65), dtype=np.uint8)
         image[:, :3*scale] = 220
@@ -53,6 +63,17 @@ class VisionTests(unittest.TestCase):
         result = detect(Image.fromarray(frame))
         self.assertIsNotNone(result)
         self.assertAlmostEqual(result.cursor, .93)
+        self.assertAlmostEqual(result.cursor_height, .06)
+
+    def test_tinted_cursor_and_independent_target_edges(self):
+        frame = np.array(self.frame((40, 98, 90)))
+        frame[360:384, 17:43] = (25, 45, 65)
+        frame[310:334, 17:43] = (134, 190, 134)
+        result = detect(Image.fromarray(frame))
+        self.assertIsNotNone(result)
+        self.assertAlmostEqual(result.target_top, .75)
+        self.assertAlmostEqual(result.target_bottom, .85)
+        self.assertAlmostEqual(result.cursor, .805)
         self.assertAlmostEqual(result.cursor_height, .06)
 
 

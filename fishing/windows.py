@@ -8,6 +8,7 @@ user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
 user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
 user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
 user32.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
 
 
 def roblox_active():
@@ -28,12 +29,25 @@ def key_down(code):
     return bool(user32.GetAsyncKeyState(code) & 0x8000)
 
 
-def collect_fish(stop):
-    user32.keybd_event(0x54, 0, 0, 0)  # T
+def tap_key(code, stop):
+    user32.keybd_event(code, 0, 0, 0)
     try:
         stop.wait(.1)
     finally:
-        user32.keybd_event(0x54, 0, 0x0002, 0)
+        user32.keybd_event(code, 0, 0x0002, 0)
+
+
+def collect_fish(stop):
+    tap_key(0x54, stop)
+
+
+def unlock_cursor(stop):
+    tap_key(0xA4, stop)  # left Alt
+
+
+def aim_at(x, y):
+    if not user32.SetCursorPos(round(x), round(y)):
+        raise OSError('No se pudo apuntar al agua.')
 
 
 class Mouse:
