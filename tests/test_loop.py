@@ -10,7 +10,7 @@ if sys.platform == 'win32':
 
 @unittest.skipUnless(sys.platform == 'win32', 'Windows application')
 class LoopTests(unittest.TestCase):
-    def simulate_three_catches(self, empty=False):
+    def simulate_three_catches(self, empty=False, retries=False):
         class Clock:
             now = 0.0
             stopped = False
@@ -28,7 +28,7 @@ class LoopTests(unittest.TestCase):
                 return self.stopped
 
         clock = Clock()
-        game = Mock(phase='ready', catches=0, casts=0, stamp=0.0, awarded=False)
+        game = Mock(phase='ready', catches=0, casts=0, presses=0, stamp=0.0, awarded=False)
 
         class Mouse:
             held = False
@@ -46,6 +46,7 @@ class LoopTests(unittest.TestCase):
 
             def hold(self, value):
                 if value and not self.held:
+                    game.presses += 1
                     game.phase, game.stamp = 'holding', clock.now
                 if not value and self.held and (game.awarded or empty):
                     game.catches += 1
@@ -65,7 +66,7 @@ class LoopTests(unittest.TestCase):
             return None
 
         def received(_):
-            if not empty and game.phase == 'holding' and clock.now-game.stamp >= .8:
+            if not empty and game.phase == 'holding' and clock.now-game.stamp >= .8 and (not retries or game.presses >= game.catches*3+3):
                 game.awarded = True
                 return True
             return False
@@ -83,15 +84,21 @@ class LoopTests(unittest.TestCase):
              patch.object(main, 'ReceiptDetector') as receipt, patch.object(main, 'CollectPrompt') as prompt, \
              patch.object(main.time, 'monotonic', side_effect=lambda: clock.now):
             receipt.return_value.visible.side_effect = received
+            prompt.return_value.loading = not retries
             prompt.return_value.locate.side_effect = lambda _: (.5, .5) if game.phase == 'collect' or (game.phase == 'holding' and (not empty or clock.now-game.stamp < .5)) else None
-            app.run(False, .3, 5, False, (.5, .4), 1)
-        self.assertEqual(game.catches, 3)
-        self.assertEqual(game.casts, 3)
+            app.run(False, .3, 5, False, (.5, .4))
+        self.assertEqual(game.catches, 1 if empty else 3)
+        self.assertEqual(game.casts, 1 if empty else 3)
         self.assertFalse(key.held)
         self.assertTrue(clock.stopped)
+        if retries:
+            self.assertGreaterEqual(game.presses, 9)
 
     def test_three_complete_catches_then_user_stop(self):
         self.simulate_three_catches()
 
-    def test_three_empty_catches_also_continue_until_stop(self):
+    def test_missing_receipt_never_recasts(self):
         self.simulate_three_catches(empty=True)
+
+    def test_idle_t_retries_then_three_receipts_continue(self):
+        self.simulate_three_catches(retries=True)

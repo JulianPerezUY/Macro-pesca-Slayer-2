@@ -13,11 +13,12 @@ class CollectPrompt:
     def __init__(self):
         base = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent.parent))
         self.templates = []
-        for name in ('collect_t.png', 'collect_t_glow.png', 'collect_t_holding.png'):
+        self.loading = False
+        for name in ('collect_t.png', 'collect_t_glow.png', 'collect_t_holding.png', 'collect_t_large.png'):
             template = cv2.imread(str(base/'assets'/name))
             if template is None:
                 raise RuntimeError('Falta la imagen de referencia del aviso T.')
-            self.templates.append(white_mask(cv2.cvtColor(template, cv2.COLOR_BGR2RGB)))
+            self.templates.append((name, white_mask(cv2.cvtColor(template, cv2.COLOR_BGR2RGB))))
 
     def visible(self, image):
         return self.locate(image) is not None
@@ -29,9 +30,10 @@ class CollectPrompt:
         crop = rgb[top:round(h*.80), left:round(w*.70)]
         mask = white_mask(crop)
         best = None
+        self.loading = False
         best_score = .78
-        for reference in self.templates:
-            for factor in (.8, .9, 1., 1.1, 1.2):
+        for name, reference in self.templates:
+            for factor in (.8, .9, 1., 1.1, 1.2, 1.4):
                 scale = h/1012*factor
                 tw, th = max(12, round(reference.shape[1]*scale)), max(12, round(reference.shape[0]*scale))
                 if th >= mask.shape[0] or tw >= mask.shape[1]:
@@ -47,6 +49,7 @@ class CollectPrompt:
                     if label.size and (label.max(axis=2) < 110).mean() > .18 and (white_mask(label)>0).mean() > .025:
                         best = ((left+x+tw/2)/w, (top+y+th/2)/h)
                         best_score = maximum
+                        self.loading = name == 'collect_t_holding.png'
                         break
                     scores[max(0,y-th//2):y+th//2+1, max(0,x-tw//2):x+tw//2+1] = -1
         return best

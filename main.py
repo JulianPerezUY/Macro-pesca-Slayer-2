@@ -13,7 +13,7 @@ from PIL import ImageGrab
 from fishing.vision import detect, automatic_region
 from fishing.control import Controller
 from fishing.scene import CollectPrompt, find_water, manual_target
-from fishing.collection import ReelGate, CollectionTracker
+from fishing.collection import CollectionTracker
 from fishing.receipt import ReceiptDetector
 from fishing.windows import Mouse, roblox_active, key_down, CollectKey, game_rect, unlock_cursor, aim_at, cursor_position
 
@@ -33,7 +33,6 @@ class App:
         self.manual_point = None
         self.selecting_aim = False
         self.selection_deadline = 0
-        self.reel_seconds = tk.StringVar(value='4')
         self.cast_seconds = tk.StringVar(value='0.3')
         self.bite_seconds = tk.StringVar(value='45')
         try:
@@ -68,7 +67,7 @@ class App:
         tk.Checkbutton(panel, text='Invertir control (el clic baja el cuadrado)', variable=self.invert, bg='#111111', fg='white', activebackground='#111111', activeforeground='white', selectcolor='#f07820', highlightthickness=0, font=('Segoe UI', 10)).pack(anchor='w', pady=8)
         fields = ttk.Frame(panel)
         fields.pack(fill='x')
-        for label, variable in [('Duración del lanzamiento (seg.)', self.cast_seconds), ('Espera máxima del pique (seg.)', self.bite_seconds), ('Espera mínima de recogida (seg.)', self.reel_seconds)]:
+        for label, variable in [('Duración del lanzamiento (seg.)', self.cast_seconds), ('Espera máxima del pique (seg.)', self.bite_seconds)]:
             row = ttk.Frame(fields)
             row.pack(fill='x', pady=3)
             ttk.Label(row, text=label).pack(side='left')
@@ -97,25 +96,24 @@ class App:
         try:
             cast = float(self.cast_seconds.get().replace(',', '.'))
             bite = float(self.bite_seconds.get().replace(',', '.'))
-            reel_delay = float(self.reel_seconds.get().replace(',', '.'))
             if not self.auto_aim.get() and self.manual_point is None:
                 self.status.set('Elegí primero Apuntado manual y guardá el punto con F6.')
                 return
-            if not .05 <= cast <= 5 or not 5 <= bite <= 180 or not 1 <= reel_delay <= 20:
+            if not .05 <= cast <= 5 or not 5 <= bite <= 180:
                 raise ValueError
             self.save()
         except (ValueError, OSError) as exc:
-            messagebox.showerror('Configuración', 'Rangos: lanzamiento 0,05–5; pique 5–180; recogida 1–20. \n' + str(exc))
+            messagebox.showerror('Configuración', 'Rangos: lanzamiento 0,05–5; pique 5–180.. \n' + str(exc))
             return
         self.stop.clear()
         self.selecting_aim = False
         self.button.configure(text='Desactivar (F8)')
         self.auto_check.configure(state='disabled')
         self.manual_button.configure(state='disabled')
-        self.worker = threading.Thread(target=self.run, args=(self.invert.get(), cast, bite, self.auto_aim.get(), self.manual_point, reel_delay), daemon=True)
+        self.worker = threading.Thread(target=self.run, args=(self.invert.get(), cast, bite, self.auto_aim.get(), self.manual_point), daemon=True)
         self.worker.start()
 
-    def run(self, invert, cast, bite, auto_aim, manual_point, reel_delay):
+    def run(self, invert, cast, bite, auto_aim, manual_point):
         mouse = Mouse()
         collect_key = CollectKey()
         controller = Controller()
@@ -129,7 +127,6 @@ class App:
             deadline = time.monotonic()
             missing_since = None
             last_preview = 0.0
-            gate = None
             tracker = None
             last_prompt_poll = 0.0
             while not self.stop.is_set():
@@ -139,8 +136,6 @@ class App:
                     collect_key.hold(False)
                     controller.reset()
                     missing_since = None
-                    if state == 'collect':
-                        gate = ReelGate(time.monotonic(), reel_delay)
                     self.events.put('Pausado: enfocá Roblox para continuar.')
                     # Suspend timers and reset input when returning to the game.
                     self.stop.wait(.25)
@@ -178,9 +173,8 @@ class App:
                     if now > deadline:
                         deadline = now+120
                     if now - missing_since >= .8:
-                        state, deadline = 'collect', now + max(30, reel_delay+15)
-                        gate = ReelGate(now, reel_delay)
-                        self.events.put('Esperando el final de la recogida y un aviso T estable…')
+                        state = 'collect'
+                        self.events.put('Esperando T: la mantendré en cuanto aparezca…')
                 elif state == 'prepare':
                     if auto_aim:
                         self.events.put('Pulsando Alt izquierdo para liberar el cursor…')
@@ -231,25 +225,25 @@ class App:
                             if received:
                                 state, deadline = 'cooldown', time.monotonic()+2.5
                                 self.events.put('Objeto recibido: detectado el aviso de cantidad. Volviendo a pescar…')
-                            elif gate.update(position, time.monotonic()):
+                            elif visible:
                                 if not roblox_active() or self.stop.is_set():
                                     continue
                                 collect_key.hold(True)
                                 tracker = CollectionTracker(time.monotonic())
                                 state = 'holding'
                                 self.events.put('Manteniendo T hasta recibir el pez u objeto…')
-                            elif now >= deadline and not visible:
-                                state, deadline = 'cooldown', time.monotonic()+2.5
-                                self.events.put('Sin objeto ni aviso T. Continuando con otra pesca…')
                         else:
-                            outcome = tracker.update(received, visible, time.monotonic())
-                            if outcome:
+                            outcome = tracker.update(received, visible, time.monotonic(), loading=prompt.loading)
+                            if outcome == 'received':
                                 collect_key.hold(False)
                                 state, deadline = 'cooldown', time.monotonic()+2.5
-                                if outcome == 'received':
-                                    self.events.put('Objeto recibido: detectado el aviso de cantidad. Volviendo a pescar…')
-                                else:
-                                    self.events.put('Sin aviso ni confirmación durante 6 segundos. Reintentando la pesca…')
+                                self.events.put('Objeto recibido: detectado x1. Volviendo a pescar…')
+                            elif outcome == 'retry':
+                                collect_key.hold(False)
+                                self.events.put('T no empezó a cargar. Volviendo a presionar y mantener…')
+                                if self.stop.wait(.12):
+                                    break
+                                collect_key.hold(True)
                 elif state == 'cooldown' and now >= deadline:
                     collect_key.hold(False)
                     state = 'cast'

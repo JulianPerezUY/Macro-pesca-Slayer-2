@@ -24,3 +24,19 @@ class ReceiptTests(unittest.TestCase):
             image.paste(patch, (1045, 490))
         self.assertTrue(CollectPrompt().visible(image))
         self.assertFalse(ReceiptDetector().visible(image))
+
+    def test_moving_large_prompt_is_recognized_without_loading(self):
+        image = Image.new('RGB', (1920, 1012), (40, 100, 190))
+        with Image.open(Path(__file__).parent/'fixtures'/'moving_prompt.png') as patch:
+            image.paste(patch, (990, 605))
+        prompt = CollectPrompt()
+        self.assertTrue(prompt.visible(image))
+        self.assertFalse(prompt.loading)
+
+    def test_diamond_is_classified_as_loading(self):
+        image = Image.new('RGB', (1920, 1012), (40, 100, 190))
+        with Image.open(Path(__file__).parent/'fixtures'/'holding_prompt.png') as patch:
+            image.paste(patch, (1045, 490))
+        prompt = CollectPrompt()
+        self.assertTrue(prompt.visible(image))
+        self.assertTrue(prompt.loading)
