@@ -27,6 +27,16 @@ class ReceiptTests(unittest.TestCase):
             image.paste(patch, (995, 530))
         self.assertTrue(ReceiptDetector().visible(image))
 
+    def test_x1_on_translucent_white_panel_is_detected(self):
+        image = Image.new('RGB', (1920, 1012), (40, 100, 190))
+        banner = Image.open(Path(__file__).parent/'fixtures'/'fish_received.png').convert('RGB')
+        x, y = 940, 520
+        image.paste(banner, (x, y))
+        # Reproduce the pale, translucent white treatment from the recording.
+        panel = Image.new('RGB', banner.size, (100, 110, 120))
+        image.paste(Image.blend(banner, panel, .5), (x, y))
+        self.assertTrue(ReceiptDetector().visible(image))
+
     def test_t_prompt_is_not_receipt(self):
         image = Image.new('RGB', (1920, 1012), (40, 100, 190))
         with Image.open(Path(__file__).parent/'fixtures'/'collect_glow.png') as patch:

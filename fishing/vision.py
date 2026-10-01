@@ -1,6 +1,7 @@
 """Detect the colored target and white cursor in a cropped fishing bar."""
 from dataclasses import dataclass
 import numpy as np
+import cv2
 
 
 @dataclass(frozen=True)
@@ -39,24 +40,57 @@ def detect(image):
     h, w = rgb.shape[:2]
     if h < 60 or w < 12:
         return None
-    # Measure target boundaries along both sides, outside the white square.
+    # The world is visible through the HUD: green scenery is not the target.
     r, g, b = rgb.transpose(2, 0, 1)
     yellow = (g > r * .65) & (g > b * 1.35) & (b < r * .8)
     green = (g > r * 1.4) & (g > b * 1.06)
     colored = (g > 55) & (yellow | green) & (rgb.min(axis=2) < 150)
-    lanes = np.r_[np.arange(int(w*.08), max(int(w*.23), int(w*.08)+1)),
-                  np.arange(int(w*.77), max(int(w*.92), int(w*.77)+1))]
-    target_rows = colored[:, lanes].mean(axis=1) > .25
+    target = rectangle_bounds(colored & (g > 165))
+    if target is None:
+        target = rectangle_bounds(colored)
     inner = rgb[:, int(w*.25):max(int(w*.75), int(w*.25)+1)]
     # White becomes pale green under the translucent target, particularly near its edges.
     white = (inner.min(axis=2) > 125) & (inner.max(axis=2) > 175) & (inner.max(axis=2)-inner.min(axis=2) < 110)
-    targets = [(a, z) for a, z in joined_runs(target_rows, max(1, round(h*.01))) if 8 <= z-a <= h*.45]
-    cursors = [(a, z) for a, z in joined_runs(white.mean(axis=1) > .4, max(1, round(h*.018))) if 7 <= z-a <= h*.15]
-    if not targets or not cursors:
+    cursors = [(a, z) for a, z in joined_runs(white.mean(axis=1) > .4, max(1, round(h*.012))) if h*.025 <= z-a <= h*.12]
+    if target is None or not cursors:
         return None
-    a, z = max(targets, key=lambda pair: pair[1]-pair[0])
+    a, z = target
     c, d = max(cursors, key=lambda pair: pair[1]-pair[0])
     return Detection((a+z)/2/h, (c+d)/2/h, (z-a)/h, (d-c)/h)
+
+
+def rectangle_bounds(mask):
+    """Locate a HUD-sized rectangular contour despite translucent edges."""
+    h, w = mask.shape
+    original = mask
+    size = max(3, round(w*.045) | 1)
+    mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((size, size), np.uint8)).astype(bool)
+    contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    candidates = []
+    for contour in contours:
+        x, y, cw, ch = cv2.boundingRect(contour)
+        if x == 0 and cw == w and original[y:y+ch, 0].mean() > .5:
+            # Scenery extending across both crop boundaries is outside the HUD.
+            continue
+        if not (.7*w <= cw <= w and .035*h <= ch <= .22*h):
+            continue
+        patch = mask[y:y+ch, x:x+cw]
+        inset = max(1, round(cw*.15))
+        edge = max(2, round(w*.045))
+        # Measure horizontal/vertical edge support outside rounded corners.
+        top = patch[:edge, inset:-inset].any(axis=0).mean()
+        bottom = patch[-edge:, inset:-inset].any(axis=0).mean()
+        side_inset = max(1, round(ch*.2))
+        left = patch[side_inset:-side_inset, :edge].any(axis=1).mean()
+        right = patch[side_inset:-side_inset, -edge:].any(axis=1).mean()
+        # Translucency can erase edges. A full horizontal edge and side still
+        # bound the rectangle; do not accept irregular green scenery blobs.
+        if max(top, bottom) >= .8 and max(left, right) >= .8:
+            candidates.append((top+bottom+left+right, y, y+ch))
+    if not candidates:
+        return None
+    _, top, bottom = max(candidates)
+    return top, bottom
 
 
 def automatic_region(width, height):

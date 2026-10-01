@@ -10,7 +10,7 @@ if sys.platform == 'win32':
 
 @unittest.skipUnless(sys.platform == 'win32', 'Windows application')
 class LoopTests(unittest.TestCase):
-    def simulate_three_catches(self, empty=False, long_hold=False):
+    def simulate_three_catches(self, empty=False, long_hold=False, interrupt=None, empty_return=False):
         class Clock:
             now = 0.0
             stopped = False
@@ -35,10 +35,12 @@ class LoopTests(unittest.TestCase):
 
             def hold(self, value):
                 self.held = value
-                if value and game.phase in ('ready', 'awarded'):
+                if value and (game.phase in ('ready', 'awarded') or (empty_return and game.phase == 'collect')):
                     game.phase = 'casting'
                     game.prompt_since = None
                     game.casts += 1
+                    if empty_return and game.casts == 3:
+                        clock.set()
                 elif not value and game.phase == 'casting':
                     game.phase, game.stamp = 'waiting', clock.now
 
@@ -47,8 +49,7 @@ class LoopTests(unittest.TestCase):
 
             def hold(self, value):
                 if value and not self.held:
-                    assert game.aim == (960, 506)
-                    assert clock.now-game.prompt_since >= main.COLLECT_DELAY
+                    assert game.aim == (960, 405)
                     game.presses += 1
                     game.phase, game.stamp = 'holding', clock.now
                 if not value and self.held and (game.awarded or empty):
@@ -69,6 +70,8 @@ class LoopTests(unittest.TestCase):
             return None
 
         def received(_):
+            if interrupt == 'error' and game.phase == 'holding':
+                raise OSError('Simulated capture failure')
             if not empty and game.phase == 'holding' and clock.now-game.stamp >= (5 if long_hold else .8):
                 game.awarded = True
                 return True
@@ -84,28 +87,40 @@ class LoopTests(unittest.TestCase):
             if key.held:
                 moves_while_held.append((x, y))
             game.aim = (x, y)
-        with patch.object(main, 'Mouse', side_effect=[Mouse(), key]), \
-             patch.object(main, 'roblox_active', return_value=True), \
+
+        def active():
+            if interrupt == 'focus' and key.held:
+                clock.set()
+                return False
+            return True
+
+        with patch.object(main, 'Mouse', return_value=Mouse()), \
+             patch.object(main, 'Key', return_value=key) as key_factory, \
+             patch.object(main, 'roblox_active', side_effect=active), \
              patch.object(main, 'game_rect', return_value=(0, 0, 1920, 1012)), \
              patch.object(main, 'aim_at', side_effect=aim), patch.object(main, 'unlock_cursor'), \
-             patch.object(main.ImageGrab, 'grab', return_value=object()), \
+             patch.object(main, 'ScreenCapture'), \
              patch.object(main, 'detect', side_effect=detection), \
              patch.object(main, 'ReceiptDetector') as receipt, patch.object(main, 'CollectPrompt') as prompt, \
              patch.object(main.time, 'monotonic', side_effect=lambda: clock.now):
             receipt.return_value.visible.side_effect = received
             def locate(_, **kwargs):
-                if game.phase == 'collect':
+                prompt.return_value.loading = game.phase == 'holding'
+                if empty_return:
+                    return None
+                if game.phase in ('collect', 'holding'):
                     if game.prompt_since is None:
                         game.prompt_since = clock.now
                     return (.5, .5)
                 return None
             prompt.return_value.locate.side_effect = locate
             app.run(False, .3, 5, False, (.5, .4))
-        self.assertEqual(game.catches, 1 if empty else 3)
-        self.assertEqual(game.casts, 1 if empty else 3)
+        key_factory.assert_called_once_with(0x54)
+        self.assertEqual(game.catches, 0 if interrupt or empty_return else (1 if empty else 3))
+        self.assertEqual(game.casts, 1 if empty or interrupt else 3)
         self.assertFalse(key.held)
         self.assertTrue(clock.stopped)
-        self.assertEqual(game.presses, 1 if empty else 3)
+        self.assertEqual(game.presses, 0 if empty_return else (1 if empty or interrupt else 3))
         self.assertEqual(moves_while_held, [])
 
     def test_three_complete_catches_then_user_stop(self):
@@ -114,5 +129,14 @@ class LoopTests(unittest.TestCase):
     def test_missing_receipt_never_recasts(self):
         self.simulate_three_catches(empty=True)
 
-    def test_long_loading_keeps_one_fixed_click_per_catch(self):
+    def test_long_loading_keeps_one_continuous_t_press_per_catch(self):
         self.simulate_three_catches(long_hold=True)
+
+    def test_focus_loss_releases_t(self):
+        self.simulate_three_catches(interrupt='focus')
+
+    def test_capture_error_releases_t(self):
+        self.simulate_three_catches(interrupt='error')
+
+    def test_empty_return_casts_again_without_t_or_receipt(self):
+        self.simulate_three_catches(empty_return=True)

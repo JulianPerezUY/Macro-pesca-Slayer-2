@@ -33,3 +33,40 @@ class MouseInputTests(unittest.TestCase):
             mouse.held = True
             mouse.hold(False)
             self.assertEqual(event.call_args.args[0], 4)
+
+
+@unittest.skipUnless(sys.platform == 'win32', 'Windows input adapter')
+class KeyInputTests(unittest.TestCase):
+    def test_t_uses_one_sendinput_scan_code_down_and_up(self):
+        with patch.object(windows.user32, 'SendInput', return_value=1) as event:
+            key = windows.Key(0x54)
+            for _ in range(100):
+                key.hold(True)
+            self.assertEqual(event.call_count, 1)
+            down = event.call_args.args[1]._obj
+            self.assertEqual(down.type, 1)
+            self.assertEqual(down.ki.wVk, 0)
+            self.assertEqual(down.ki.wScan, 0x14)
+            self.assertEqual(down.ki.dwFlags, 0x0008)
+            key.hold(False)
+            key.hold(False)
+            self.assertFalse(key.held)
+            self.assertEqual(event.call_count, 2)
+            up = event.call_args.args[1]._obj
+            self.assertEqual(up.ki.wScan, 0x14)
+            self.assertEqual(up.ki.dwFlags, 0x000A)
+
+    def test_t_sendinput_failure_is_reported_without_changing_held_state(self):
+        with patch.object(windows.user32, 'SendInput', return_value=0):
+            key = windows.Key(0x54)
+            with self.assertRaises(OSError):
+                key.hold(True)
+            self.assertFalse(key.held)
+
+    def test_t_release_works_without_game_focus(self):
+        with patch.object(windows.user32, 'SendInput', return_value=1) as event, patch.object(windows, 'roblox_active', return_value=False):
+            key = windows.Key(0x54)
+            key.held = True
+            key.hold(False)
+            self.assertEqual(event.call_count, 1)
+            self.assertEqual(event.call_args.args[1]._obj.ki.dwFlags, 0x000A)
