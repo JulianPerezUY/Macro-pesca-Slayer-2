@@ -6,6 +6,20 @@ from fishing.vision import detect
 
 
 class VisionTests(unittest.TestCase):
+    def test_rectangle_is_not_the_green_leaves_behind_hud(self):
+        # Pixel annotations from the user's 2026-10-01 recording, cropped HUD.
+        for frame, top, bottom, cursor in [(17, 279, 321, 92), (20, 169, 209, 61.5),
+                                           (42, 319, 361, 348.5), (44, 193, 233, 12)]:
+            with Image.open(Path(__file__).parent/'fixtures'/f'bar_leaves_{frame}.png') as im:
+                for scale in (.5, 2/3, 1, 4/3, 2):
+                    resized = im.resize((round(im.width*scale), round(im.height*scale)))
+                    with self.subTest(frame=frame, scale=scale):
+                        result = detect(resized)
+                        self.assertIsNotNone(result)
+                        self.assertAlmostEqual(result.target_top, top/400, delta=.012)
+                        self.assertAlmostEqual(result.target_bottom, bottom/400, delta=.012)
+                        self.assertAlmostEqual(result.cursor, cursor/400, delta=.012)
+
     def test_real_tinted_square_from_video(self):
         with Image.open(Path(__file__).parent/'fixtures'/'tinted_bar.png') as image:
             result = detect(image)

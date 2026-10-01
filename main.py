@@ -9,11 +9,13 @@ import threading
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox
-from PIL import ImageGrab
+from fishing.capture import ScreenCapture
 from fishing.vision import detect, automatic_region
 from fishing.control import Controller
-from fishing.scene import CollectPrompt, find_water
-from fishing.windows import Mouse, roblox_active, key_down, collect_fish, game_rect, unlock_cursor, aim_at
+from fishing.scene import CollectPrompt, find_water, manual_target
+from fishing.receipt import ReceiptDetector
+from fishing.collection import Collection
+from fishing.windows import Mouse, Key, roblox_active, key_down, game_rect, unlock_cursor, aim_at, cursor_position
 
 ctypes.windll.user32.SetProcessDPIAware()
 SETTINGS = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Slayer2Fishing' / 'settings.json'
@@ -27,15 +29,23 @@ class App:
         self.worker = None
         self.events = queue.Queue()
         self.invert = tk.BooleanVar(value=False)
+        self.auto_aim = tk.BooleanVar(value=True)
+        self.manual_point = None
+        self.selecting_aim = False
+        self.selection_deadline = 0
         self.cast_seconds = tk.StringVar(value='0.3')
         self.bite_seconds = tk.StringVar(value='45')
         try:
             saved = json.loads(SETTINGS.read_text())
             self.invert.set(bool(saved.get('invert', False)))
+            self.auto_aim.set(bool(saved.get('auto_aim', True)))
+            point = saved.get('manual_point')
+            if isinstance(point, list) and len(point) == 2 and all(isinstance(v, (int, float)) and 0 < v < 1 for v in point):
+                self.manual_point = tuple(point)
         except (OSError, ValueError, TypeError):
             pass
         root.title('Slayer 2 · Pesca')
-        root.geometry('490x570+16+70')
+        root.geometry('510x680+16+70')
         root.attributes('-topmost', True)
         self.style(root)
         root.resizable(False, False)
@@ -45,6 +55,14 @@ class App:
         ttk.Label(panel, text='Equipá la caña cerca del agua. Ventana siempre arriba.\nF8 activa/desactiva · F9 detiene', padding=(0, 12)).pack(anchor='w')
         self.button = ttk.Button(panel, text='Activar (F8)', command=self.toggle)
         self.button.pack(fill='x', pady=6)
+        aiming = ttk.Frame(panel)
+        aiming.pack(fill='x', pady=6)
+        self.auto_check = tk.Checkbutton(aiming, text='Apuntado automático', variable=self.auto_aim, bg='#111111', fg='white', activebackground='#111111', activeforeground='white', selectcolor='#f07820', highlightthickness=0, font=('Segoe UI', 10))
+        self.auto_check.pack(side='left')
+        self.manual_button = ttk.Button(aiming, text='Apuntado manual', command=self.select_manual_aim)
+        self.manual_button.pack(side='right')
+        self.aim_status = tk.StringVar(value='Punto manual guardado' if self.manual_point else 'Manual: elegí el punto con F6')
+        ttk.Label(panel, textvariable=self.aim_status).pack(anchor='w', pady=3)
         ttk.Label(panel, text='Detección automática de la barra').pack(anchor='w', pady=8)
         tk.Checkbutton(panel, text='Invertir control (el clic baja el cuadrado)', variable=self.invert, bg='#111111', fg='white', activebackground='#111111', activeforeground='white', selectcolor='#f07820', highlightthickness=0, font=('Segoe UI', 10)).pack(anchor='w', pady=8)
         fields = ttk.Frame(panel)
@@ -54,18 +72,24 @@ class App:
             row.pack(fill='x', pady=3)
             ttk.Label(row, text=label).pack(side='left')
             ttk.Entry(row, textvariable=variable, width=8).pack(side='right')
-        self.tracking = tk.Canvas(panel, height=86, bg='#111111', highlightthickness=0)
+        ttk.Label(panel, text='T mantenida hasta confirmar la recogida · Ciclo continuo', wraplength=440).pack(anchor='w', pady=6)
+        self.tracking = tk.Canvas(panel, height=120, bg='#111111', highlightthickness=0)
         self.tracking.pack(fill='x', pady=(8, 0))
         self.draw_tracking(None)
         self.status = tk.StringVar(value='Desactivado')
         ttk.Label(panel, textvariable=self.status, wraplength=400).pack(anchor='w', pady=12)
+        root.update_idletasks()
+        # Reserve two extra status lines at the current Windows display scale.
+        status_space = round(float(root.tk.call('tk', 'scaling')) * 30)
+        root.geometry(f'{max(510, panel.winfo_reqwidth())}x{max(680, panel.winfo_reqheight()+status_space)}+16+70')
         root.protocol('WM_DELETE_WINDOW', self.close)
         self.previous_f8 = False
+        self.previous_f6 = False
         self.poll()
 
     def save(self):
         SETTINGS.parent.mkdir(parents=True, exist_ok=True)
-        SETTINGS.write_text(json.dumps({'invert': self.invert.get()}))
+        SETTINGS.write_text(json.dumps({'invert': self.invert.get(), 'auto_aim': self.auto_aim.get(), 'manual_point': self.manual_point}))
 
     def toggle(self):
         if not self.stop.is_set():
@@ -76,38 +100,50 @@ class App:
         try:
             cast = float(self.cast_seconds.get().replace(',', '.'))
             bite = float(self.bite_seconds.get().replace(',', '.'))
+            if not self.auto_aim.get() and self.manual_point is None:
+                self.status.set('Elegí primero Apuntado manual y guardá el punto con F6.')
+                return
             if not .05 <= cast <= 5 or not 5 <= bite <= 180:
                 raise ValueError
             self.save()
         except (ValueError, OSError) as exc:
-            messagebox.showerror('Configuración', 'Usá un lanzamiento entre 0,05 y 5 segundos y una espera entre 5 y 180.\n' + str(exc))
+            messagebox.showerror('Configuración', 'Rangos: lanzamiento 0,05–5; pique 5–180.. \n' + str(exc))
             return
         self.stop.clear()
+        self.selecting_aim = False
         self.button.configure(text='Desactivar (F8)')
-        self.worker = threading.Thread(target=self.run, args=(self.invert.get(), cast, bite, (self.root.winfo_rootx(), self.root.winfo_rooty(), self.root.winfo_rootx()+self.root.winfo_width(), self.root.winfo_rooty()+self.root.winfo_height())), daemon=True)
+        self.auto_check.configure(state='disabled')
+        self.manual_button.configure(state='disabled')
+        self.worker = threading.Thread(target=self.run, args=(self.invert.get(), cast, bite, self.auto_aim.get(), self.manual_point), daemon=True)
         self.worker.start()
 
-    def run(self, invert, cast, bite, app_rect):
+    def run(self, invert, cast, bite, auto_aim, manual_point):
         mouse = Mouse()
+        collect_key = Key(0x54)
         controller = Controller()
+        capture = None
         try:
+            capture = ScreenCapture()
             prompt = CollectPrompt()
-            self.events.put('Activando en 3 segundos: enfocá Roblox. Prepararé Alt izquierdo y buscaré agua.')
+            receipt = ReceiptDetector()
+            self.events.put('Activando en 3 segundos: enfocá Roblox. Prepararé el lanzamiento elegido.')
             if self.stop.wait(3):
                 return
             state = 'prepare'
             deadline = time.monotonic()
             missing_since = None
             last_preview = 0.0
-            prompt_hits = 0
-            attempts = 0
             last_prompt_poll = 0.0
+            collection = None
             while not self.stop.is_set():
                 now = time.monotonic()
                 if not roblox_active():
                     mouse.hold(False)
+                    collect_key.hold(False)
                     controller.reset()
                     missing_since = None
+                    if collection is not None:
+                        collection.pause(.25)
                     self.events.put('Pausado: enfocá Roblox para continuar.')
                     # Suspend timers and reset input when returning to the game.
                     self.stop.wait(.25)
@@ -116,15 +152,20 @@ class App:
                 x, y, width, height = game_rect()
                 if width < 320 or height < 240:
                     mouse.hold(False)
+                    collect_key.hold(False)
                     controller.reset()
+                    if collection is not None:
+                        collection.pause(.1)
                     deadline += .1
                     self.stop.wait(.1)
                     continue
                 left, top, right, bottom = automatic_region(width, height)
-                result = detect(ImageGrab.grab(bbox=(x+left, y+top, x+right, y+bottom)))
+                result = None if state == 'collect' and collection.held else detect(capture.grab(bbox=(x+left, y+top, x+right, y+bottom)))
                 if result:
+                    collect_key.hold(False)
                     if state != 'play':
                         state = 'play'
+                        collection = None
                         deadline = now + 120
                         self.events.put('Pescando: siguiendo la zona verde/amarilla.')
                     missing_since = None
@@ -133,31 +174,47 @@ class App:
                         self.events.put(result)
                         last_preview = now
                     if now > deadline:
-                        raise RuntimeError('La barra lleva 120 segundos visible. Revisá el sentido del control.')
+                        deadline = now+120
+                        self.events.put('La pesca continúa; esperando a que termine la barra…')
                 elif state == 'play':
-                    mouse.hold(False)
-                    controller.reset()
                     if missing_since is None:
                         missing_since = now
+                    if now-missing_since < .12:
+                        mouse.hold(controller.brake(mouse.held, invert))
+                    else:
+                        mouse.hold(False)
+                        controller.reset()
                     if now > deadline:
-                        raise RuntimeError('La pesca superó 120 segundos. Revisá el sentido del control.')
+                        deadline = now+120
                     if now - missing_since >= .8:
-                        state, deadline = 'collect', now + 25
-                        prompt_hits = attempts = 0
-                        self.events.put('Esperando que el pescado se acerque y aparezca T…')
+                        state = 'collect'
+                        collection = Collection(now)
+                        self.events.put('Esperando el cartel T para recoger con T mantenida…')
                 elif state == 'prepare':
-                    self.events.put('Pulsando Alt izquierdo para liberar el cursor…')
-                    unlock_cursor(self.stop)
+                    if auto_aim:
+                        self.events.put('Pulsando Alt izquierdo para liberar el cursor…')
+                        unlock_cursor(self.stop)
+                    else:
+                        self.events.put('Usando el punto manual con el cursor libre…')
                     if self.stop.wait(.25):
                         break
                     state = 'cast'
                 elif state == 'cast' and now >= deadline:
-                    scene = ImageGrab.grab(bbox=(x, y, x+width, y+height))
                     app_rect = self.window_bounds
                     excluded = (app_rect[0]-x, app_rect[1]-y, app_rect[2]-x, app_rect[3]-y)
-                    point = find_water(scene, excluded)
+                    if auto_aim:
+                        point = find_water(capture.grab(bbox=(x, y, x+width, y+height)), excluded)
+                    else:
+                        try:
+                            point = manual_target(width, height, manual_point, excluded)
+                        except ValueError as exc:
+                            self.events.put(str(exc))
+                            deadline = now+2
+                            continue
                     if point is None:
-                        raise RuntimeError('No encuentro agua azul despejada. Orientá la cámara hacia el agua y activá de nuevo.')
+                        self.events.put('Esperando agua azul despejada. Orientá la cámara hacia el agua…')
+                        deadline = now+2
+                        continue
                     aim_at(x+point[0], y+point[1])
                     if self.stop.wait(.15) or not roblox_active():
                         continue
@@ -168,46 +225,84 @@ class App:
                     state, deadline = 'waiting', time.monotonic() + bite
                     self.events.put('Caña lanzada. Esperando el minijuego…')
                 elif state == 'waiting' and now >= deadline:
-                    raise RuntimeError('No apareció la barra. Dejá visible toda la ventana de Roblox y revisá la caña y el lanzamiento.')
-                elif state in ('collect', 'verify'):
-                    if now >= deadline:
-                        raise RuntimeError('No pude confirmar la recogida. Revisá si el pescado está cerca y aparece T.')
-                    if now-last_prompt_poll >= .15:
+                    state, deadline = 'cooldown', now+2.5
+                    self.events.put('No hubo pique detectado. Reintentando el lanzamiento…')
+                elif state == 'collect':
+                    if now-last_prompt_poll >= .1:
                         last_prompt_poll = now
-                        visible = prompt.visible(ImageGrab.grab(bbox=(x, y, x+width, y+height)))
-                        if state == 'collect':
-                            prompt_hits = prompt_hits+1 if visible else 0
-                            if prompt_hits >= 2:
-                                if not roblox_active() or self.stop.is_set():
-                                    continue
-                                collect_fish(self.stop)
-                                attempts += 1
-                                state, deadline = 'verify', time.monotonic()+5
-                                prompt_hits = 0
-                                self.events.put('T detectada y pulsada. Confirmando recogida…')
-                        elif not visible:
-                            prompt_hits += 1
-                            if prompt_hits >= 3:
-                                state, deadline = 'cooldown', time.monotonic()+2.5
-                                self.events.put('El aviso desapareció. Preparando otro lanzamiento…')
-                        else:
-                            prompt_hits = 0
-                            if now >= deadline-3 and attempts < 3:
-                                collect_fish(self.stop)
-                                attempts += 1
-                                deadline = time.monotonic()+5
+                        scene = capture.grab(bbox=(x, y, x+width, y+height))
+                        received = receipt.visible(scene)
+                        position = None if received else prompt.locate(scene)
+                        action = collection.update(time.monotonic(), position is not None,
+                                                   prompt.loading, received)
+                        if not roblox_active() or self.stop.is_set():
+                            collect_key.hold(False)
+                            collection.pause(0)
+                            continue
+                        collect_key.hold(collection.held)
+                        if action == 'received':
+                            state, deadline = 'cooldown', time.monotonic()+2.5
+                            self.events.put('Objeto recibido: detectado x1. Volviendo a pescar…')
+                        elif action == 'empty':
+                            state, deadline = 'cast', time.monotonic()
+                            self.events.put('Caña sin aviso de recogida. Volviendo a lanzar…')
+                        elif action == 'retry':
+                            self.events.put('La T no carga: soltando y reintentando una pulsación sostenida…')
+                        elif action == 'holding':
+                            self.events.put('T mantenida: comprobando el rombo y esperando x1…')
                 elif state == 'cooldown' and now >= deadline:
+                    collect_key.hold(False)
                     state = 'cast'
-                self.stop.wait(.015)
+                self.stop.wait(.002 if state == 'play' else .015)
         except Exception as exc:
             self.events.put('Error: ' + str(exc))
         finally:
+            collect_key.hold(False)
             mouse.hold(False)
+            if capture is not None:
+                capture.close()
             self.stop.set()
             self.events.put(None)
 
+    def select_manual_aim(self):
+        if self.worker and self.worker.is_alive():
+            return
+        self.selecting_aim = True
+        self.selection_deadline = time.monotonic()+30
+        self.status.set('Enfocá Roblox, apuntá al agua y pulsá F6. Alt libera el cursor; Esc cancela.')
+
+    def capture_manual_aim(self):
+        if not roblox_active():
+            self.status.set('Para guardar con F6, enfocá Roblox y apuntá al agua.')
+            return
+        try:
+            x, y, width, height = game_rect()
+            px, py = cursor_position()
+            point = ((px-x)/max(1, width), (py-y)/max(1, height))
+            bounds = self.window_bounds
+            manual_target(width, height, point, (bounds[0]-x, bounds[1]-y, bounds[2]-x, bounds[3]-y))
+            self.manual_point = point
+            self.auto_aim.set(False)
+            self.save()
+        except (OSError, ValueError) as exc:
+            self.status.set(str(exc))
+            return
+        self.selecting_aim = False
+        self.aim_status.set(f'Punto manual: {point[0]*100:.1f}% × {point[1]*100:.1f}%')
+        self.status.set('Punto guardado. Se usará en cada lanzamiento; podés activar con F8.')
+
     def draw_tracking(self, detection):
         self.tracking.delete('all')
+        self.tracking.create_rectangle(365, 6, 400, 114, outline='#666666')
+        if detection is not None:
+            upper = 6 + 108*detection.target_top
+            lower = 6 + 108*detection.target_bottom
+            center = 6 + 108*detection.cursor
+            self.tracking.create_rectangle(365, upper, 400, lower, fill='#365b28', outline='')
+            half = 54*detection.cursor_height
+            self.tracking.create_rectangle(375, center-half, 390, center+half, outline='white')
+            for y, color in [(upper, '#ff8c32'), (lower, '#ff8c32'), (center, '#ffffff')]:
+                self.tracking.create_line(355, y, 410, y, fill=color, width=2)
         values = [('Superior', None if detection is None else detection.target_top, '#ff8c32'),
                   ('Inferior', None if detection is None else detection.target_bottom, '#ff8c32'),
                   ('Centro del cuadrado', None if detection is None else detection.cursor, '#ffffff')]
@@ -233,6 +328,14 @@ class App:
         self.window_bounds = (self.root.winfo_rootx(), self.root.winfo_rooty(),
                               self.root.winfo_rootx()+self.root.winfo_width(),
                               self.root.winfo_rooty()+self.root.winfo_height())
+        f6 = key_down(0x75)
+        if self.selecting_aim:
+            if key_down(0x1B) or time.monotonic() >= self.selection_deadline:
+                self.selecting_aim = False
+                self.status.set('Selección manual cancelada.')
+            elif f6 and not self.previous_f6:
+                self.capture_manual_aim()
+        self.previous_f6 = f6
         pressed = key_down(0x77)
         if pressed and not self.previous_f8:
             self.toggle()
@@ -244,6 +347,8 @@ class App:
             if event is None:
                 self.button.configure(text='Activar (F8)')
                 self.draw_tracking(None)
+                self.auto_check.configure(state='normal')
+                self.manual_button.configure(state='normal')
                 if not self.status.get().startswith('Error:'):
                     self.status.set('Desactivado')
             elif hasattr(event, 'target_top'):
@@ -264,6 +369,13 @@ if __name__ == '__main__':
     root = tk.Tk()
     app = App(root)
     if '--smoke-test' in sys.argv:
+        CollectPrompt()
+        ReceiptDetector()
+        capture = ScreenCapture()
+        try:
+            assert capture.grab((0, 0, 16, 16)).size == (16, 16)
+        finally:
+            capture.close()
         app.status.set('Error: No apareció la barra. Dejá visible toda la ventana de Roblox y revisá la caña y el lanzamiento.')
         root.update()
         panel = root.winfo_children()[0]

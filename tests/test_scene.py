@@ -38,3 +38,12 @@ class SceneTests(unittest.TestCase):
 
     def test_no_prompt_does_not_collect(self):
         self.assertFalse(CollectPrompt().visible(Image.new('RGB', (1920, 1012), (40, 100, 190))))
+
+    def test_real_glowing_prompt_is_located(self):
+        im = Image.new('RGB', (1920, 1012), (40, 100, 190))
+        with Image.open(Path(__file__).parent/'fixtures'/'collect_glow.png') as patch:
+            im.paste(patch, (1045, 490))
+        point = CollectPrompt().locate(im)
+        self.assertIsNotNone(point)
+        self.assertAlmostEqual(point[0], 1081/1920, delta=.01)
+        self.assertAlmostEqual(point[1], 527/1012, delta=.01)
