@@ -38,18 +38,6 @@ def tap_key(code, stop):
         user32.keybd_event(code, 0, 0x0002, 0)
 
 
-class CollectKey:
-    def __init__(self):
-        self.held = False
-
-    def hold(self, value):
-        if value and not roblox_active():
-            value = False
-        if value != self.held:
-            user32.keybd_event(0x54, 0, 0 if value else 0x0002, 0)
-            self.held = value
-
-
 def cursor_position():
     point = wintypes.POINT()
     if not user32.GetCursorPos(ctypes.byref(point)):

@@ -6,6 +6,21 @@ from fishing.scene import CollectPrompt
 
 
 class ReceiptTests(unittest.TestCase):
+    def test_fish_loading_from_latest_video(self):
+        image = Image.new('RGB', (1920, 1012), (40, 100, 190))
+        with Image.open(Path(__file__).parent/'fixtures'/'fish_loading.png') as patch:
+            image.paste(patch, (875, 415))
+        prompt = CollectPrompt()
+        point = prompt.locate(image)
+        self.assertIsNotNone(point)
+        self.assertTrue(prompt.loading)
+        self.assertFalse(ReceiptDetector().visible(image))
+
+    def test_fish_receipt_from_latest_video(self):
+        image = Image.new('RGB', (1920, 1012), (40, 100, 190))
+        with Image.open(Path(__file__).parent/'fixtures'/'fish_received.png') as patch:
+            image.paste(patch, (940, 520))
+        self.assertTrue(ReceiptDetector().visible(image))
     def test_item_quantity_is_receipt(self):
         image = Image.new('RGB', (1920, 1012), (40, 100, 190))
         with Image.open(Path(__file__).parent/'fixtures'/'received_item.png') as patch:

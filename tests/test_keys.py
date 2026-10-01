@@ -7,32 +7,29 @@ if sys.platform == 'win32':
 
 
 @unittest.skipUnless(sys.platform == 'win32', 'Windows input adapter')
-class KeyTests(unittest.TestCase):
-    def test_hold_is_continuous_until_explicit_release(self):
-        with patch.object(windows.user32, 'keybd_event') as key, patch.object(windows, 'roblox_active', return_value=True):
-            held = windows.CollectKey()
+class MouseInputTests(unittest.TestCase):
+    def test_click_is_continuous_until_release(self):
+        with patch.object(windows.user32, 'mouse_event') as event:
+            mouse = windows.Mouse()
             for _ in range(100):
-                held.hold(True)
-            self.assertTrue(held.held)
-            self.assertEqual(len(key.call_args_list), 1)
-            held.hold(False)
-            held.hold(False)
-            self.assertFalse(held.held)
-            self.assertEqual([call.args for call in key.call_args_list], [(0x54, 0, 0, 0), (0x54, 0, 2, 0)])
+                mouse.hold(True)
+            self.assertEqual(len(event.call_args_list), 1)
+            self.assertTrue(mouse.held)
+            mouse.hold(False)
+            self.assertFalse(mouse.held)
+            self.assertEqual([call.args[0] for call in event.call_args_list], [2, 4])
 
-    def test_inactive_game_prevents_key_press(self):
-        with patch.object(windows.user32, 'keybd_event') as key, patch.object(windows, 'roblox_active', return_value=False):
-            held = windows.CollectKey()
-            held.hold(True)
-            self.assertFalse(held.held)
-            key.assert_not_called()
+    def test_repeated_release_does_not_send_extra_clicks(self):
+        with patch.object(windows.user32, 'mouse_event') as event:
+            mouse = windows.Mouse()
+            mouse.hold(True)
+            mouse.hold(False)
+            mouse.hold(False)
+            self.assertEqual(len(event.call_args_list), 2)
 
-    def test_focus_loss_releases_t(self):
-        with patch.object(windows.user32, 'keybd_event') as key, patch.object(windows, 'roblox_active') as active:
-            held = windows.CollectKey()
-            active.return_value = True
-            held.hold(True)
-            active.return_value = False
-            held.hold(True)
-            self.assertFalse(held.held)
-            self.assertEqual(key.call_args.args, (0x54, 0, 2, 0))
+    def test_release_works_without_game_focus(self):
+        with patch.object(windows.user32, 'mouse_event') as event, patch.object(windows, 'roblox_active', return_value=False):
+            mouse = windows.Mouse()
+            mouse.held = True
+            mouse.hold(False)
+            self.assertEqual(event.call_args.args[0], 4)

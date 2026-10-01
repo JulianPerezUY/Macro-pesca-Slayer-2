@@ -46,6 +46,7 @@ class LoopTests(unittest.TestCase):
 
             def hold(self, value):
                 if value and not self.held:
+                    assert game.aim == (960, 506)
                     game.presses += 1
                     game.phase, game.stamp = 'holding', clock.now
                 if not value and self.held and (game.awarded or empty):
@@ -75,17 +76,17 @@ class LoopTests(unittest.TestCase):
         app.stop, app.events = clock, queue.Queue()
         app.window_bounds = (0, 0, 400, 400)
         key = Key()
-        with patch.object(main, 'Mouse', Mouse), patch.object(main, 'CollectKey', return_value=key), \
+        with patch.object(main, 'Mouse', side_effect=[Mouse(), key]), \
              patch.object(main, 'roblox_active', return_value=True), \
              patch.object(main, 'game_rect', return_value=(0, 0, 1920, 1012)), \
-             patch.object(main, 'aim_at'), patch.object(main, 'unlock_cursor'), \
+             patch.object(main, 'aim_at', side_effect=lambda x,y: setattr(game, 'aim', (x,y))), patch.object(main, 'unlock_cursor'), \
              patch.object(main.ImageGrab, 'grab', return_value=object()), \
              patch.object(main, 'detect', side_effect=detection), \
              patch.object(main, 'ReceiptDetector') as receipt, patch.object(main, 'CollectPrompt') as prompt, \
              patch.object(main.time, 'monotonic', side_effect=lambda: clock.now):
             receipt.return_value.visible.side_effect = received
             prompt.return_value.loading = not retries
-            prompt.return_value.locate.side_effect = lambda _: (.5, .5) if game.phase == 'collect' or (game.phase == 'holding' and (not empty or clock.now-game.stamp < .5)) else None
+            prompt.return_value.locate.side_effect = lambda _, **kwargs: (.5, .5) if game.phase == 'collect' or (game.phase == 'holding' and (not empty or clock.now-game.stamp < .5)) else None
             app.run(False, .3, 5, False, (.5, .4))
         self.assertEqual(game.catches, 1 if empty else 3)
         self.assertEqual(game.casts, 1 if empty else 3)

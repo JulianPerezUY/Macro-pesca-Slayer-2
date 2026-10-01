@@ -15,7 +15,7 @@ from fishing.control import Controller
 from fishing.scene import CollectPrompt, find_water, manual_target
 from fishing.collection import CollectionTracker
 from fishing.receipt import ReceiptDetector
-from fishing.windows import Mouse, roblox_active, key_down, CollectKey, game_rect, unlock_cursor, aim_at, cursor_position
+from fishing.windows import Mouse, roblox_active, key_down, game_rect, unlock_cursor, aim_at, cursor_position
 
 ctypes.windll.user32.SetProcessDPIAware()
 SETTINGS = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Slayer2Fishing' / 'settings.json'
@@ -72,7 +72,7 @@ class App:
             row.pack(fill='x', pady=3)
             ttk.Label(row, text=label).pack(side='left')
             ttk.Entry(row, textvariable=variable, width=8).pack(side='right')
-        ttk.Label(panel, text='T se mantiene hasta confirmar la recogida · Ciclo continuo', wraplength=440).pack(anchor='w', pady=6)
+        ttk.Label(panel, text='Clic sobre T hasta confirmar la recogida · Ciclo continuo', wraplength=440).pack(anchor='w', pady=6)
         self.tracking = tk.Canvas(panel, height=86, bg='#111111', highlightthickness=0)
         self.tracking.pack(fill='x', pady=(8, 0))
         self.draw_tracking(None)
@@ -115,7 +115,8 @@ class App:
 
     def run(self, invert, cast, bite, auto_aim, manual_point):
         mouse = Mouse()
-        collect_key = CollectKey()
+        collect_mouse = Mouse()
+        last_interaction = None
         controller = Controller()
         try:
             prompt = CollectPrompt()
@@ -133,9 +134,11 @@ class App:
                 now = time.monotonic()
                 if not roblox_active():
                     mouse.hold(False)
-                    collect_key.hold(False)
+                    collect_mouse.hold(False)
                     controller.reset()
                     missing_since = None
+                    if state == 'holding':
+                        tracker = CollectionTracker(time.monotonic())
                     self.events.put('Pausado: enfocá Roblox para continuar.')
                     # Suspend timers and reset input when returning to the game.
                     self.stop.wait(.25)
@@ -144,7 +147,7 @@ class App:
                 x, y, width, height = game_rect()
                 if width < 320 or height < 240:
                     mouse.hold(False)
-                    collect_key.hold(False)
+                    collect_mouse.hold(False)
                     controller.reset()
                     deadline += .1
                     self.stop.wait(.1)
@@ -152,7 +155,7 @@ class App:
                 left, top, right, bottom = automatic_region(width, height)
                 result = detect(ImageGrab.grab(bbox=(x+left, y+top, x+right, y+bottom)))
                 if result:
-                    collect_key.hold(False)
+                    collect_mouse.hold(False)
                     if state != 'play':
                         state = 'play'
                         deadline = now + 120
@@ -174,7 +177,7 @@ class App:
                         deadline = now+120
                     if now - missing_since >= .8:
                         state = 'collect'
-                        self.events.put('Esperando T: la mantendré en cuanto aparezca…')
+                        self.events.put('Esperando el cartel T para recoger con clic mantenido…')
                 elif state == 'prepare':
                     if auto_aim:
                         self.events.put('Pulsando Alt izquierdo para liberar el cursor…')
@@ -213,45 +216,58 @@ class App:
                     state, deadline = 'cooldown', now+2.5
                     self.events.put('No hubo pique detectado. Reintentando el lanzamiento…')
                 elif state in ('collect', 'holding'):
-                    if state == 'holding':
-                        collect_key.hold(True)
                     if now-last_prompt_poll >= .15:
                         last_prompt_poll = now
                         scene = ImageGrab.grab(bbox=(x, y, x+width, y+height))
                         received = receipt.visible(scene)
-                        position = prompt.locate(scene)
+                        position = prompt.locate(scene, near=last_interaction if state == 'holding' else None)
                         visible = position is not None
+                        clickable = False
+                        if visible and not received:
+                            bounds = self.window_bounds
+                            excluded = (bounds[0]-x, bounds[1]-y, bounds[2]-x, bounds[3]-y)
+                            try:
+                                px, py = manual_target(width, height, position, excluded)
+                                if roblox_active() and not self.stop.is_set():
+                                    aim_at(x+px, y+py)
+                                    last_interaction = position
+                                    clickable = True
+                            except ValueError:
+                                collect_mouse.hold(False)
+                                self.events.put('La aplicación tapa el cartel T. Movela a un lado para recoger…')
+                        if state == 'holding' and clickable:
+                            collect_mouse.hold(True)
                         if state == 'collect':
                             if received:
                                 state, deadline = 'cooldown', time.monotonic()+2.5
                                 self.events.put('Objeto recibido: detectado el aviso de cantidad. Volviendo a pescar…')
-                            elif visible:
+                            elif clickable:
                                 if not roblox_active() or self.stop.is_set():
                                     continue
-                                collect_key.hold(True)
+                                collect_mouse.hold(True)
                                 tracker = CollectionTracker(time.monotonic())
                                 state = 'holding'
-                                self.events.put('Manteniendo T hasta recibir el pez u objeto…')
+                                self.events.put('Manteniendo clic sobre el cartel T hasta recibir el pez u objeto…')
                         else:
                             outcome = tracker.update(received, visible, time.monotonic(), loading=prompt.loading)
                             if outcome == 'received':
-                                collect_key.hold(False)
+                                collect_mouse.hold(False)
                                 state, deadline = 'cooldown', time.monotonic()+2.5
                                 self.events.put('Objeto recibido: detectado x1. Volviendo a pescar…')
-                            elif outcome == 'retry':
-                                collect_key.hold(False)
-                                self.events.put('T no empezó a cargar. Volviendo a presionar y mantener…')
+                            elif outcome == 'retry' and clickable:
+                                collect_mouse.hold(False)
+                                self.events.put('La carga no empezó. Volviendo a hacer clic y mantener…')
                                 if self.stop.wait(.12):
                                     break
-                                collect_key.hold(True)
+                                collect_mouse.hold(True)
                 elif state == 'cooldown' and now >= deadline:
-                    collect_key.hold(False)
+                    collect_mouse.hold(False)
                     state = 'cast'
                 self.stop.wait(.015)
         except Exception as exc:
             self.events.put('Error: ' + str(exc))
         finally:
-            collect_key.hold(False)
+            collect_mouse.hold(False)
             mouse.hold(False)
             self.stop.set()
             self.events.put(None)

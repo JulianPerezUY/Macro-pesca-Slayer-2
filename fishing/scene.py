@@ -14,7 +14,7 @@ class CollectPrompt:
         base = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent.parent))
         self.templates = []
         self.loading = False
-        for name in ('collect_t.png', 'collect_t_glow.png', 'collect_t_holding.png', 'collect_t_large.png'):
+        for name in ('collect_t.png', 'collect_t_glow.png', 'collect_t_holding.png', 'collect_t_large.png', 'collect_t_fish_holding.png'):
             template = cv2.imread(str(base/'assets'/name))
             if template is None:
                 raise RuntimeError('Falta la imagen de referencia del aviso T.')
@@ -23,15 +23,19 @@ class CollectPrompt:
     def visible(self, image):
         return self.locate(image) is not None
 
-    def locate(self, image):
+    def locate(self, image, near=None):
         rgb = np.asarray(image.convert('RGB'))
         h, w = rgb.shape[:2]
         left, top = round(w*.30), round(h*.18)
-        crop = rgb[top:round(h*.80), left:round(w*.70)]
+        right, bottom = round(w*.70), round(h*.80)
+        if near is not None:
+            left, top = max(0, round((near[0]-.05)*w)), max(0, round((near[1]-.045)*h))
+            right, bottom = min(w, round((near[0]+.10)*w)), min(h, round((near[1]+.045)*h))
+        crop = rgb[top:bottom, left:right]
         mask = white_mask(crop)
         best = None
         self.loading = False
-        best_score = .78
+        best_score = .68 if near is not None else .78
         for name, reference in self.templates:
             for factor in (.8, .9, 1., 1.1, 1.2, 1.4):
                 scale = h/1012*factor
@@ -49,7 +53,7 @@ class CollectPrompt:
                     if label.size and (label.max(axis=2) < 110).mean() > .18 and (white_mask(label)>0).mean() > .025:
                         best = ((left+x+tw/2)/w, (top+y+th/2)/h)
                         best_score = maximum
-                        self.loading = name == 'collect_t_holding.png'
+                        self.loading = 'holding' in name
                         break
                     scores[max(0,y-th//2):y+th//2+1, max(0,x-tw//2):x+tw//2+1] = -1
         return best
