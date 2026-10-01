@@ -47,6 +47,14 @@ class VisionTests(unittest.TestCase):
         self.assertAlmostEqual(result.target, .8)
         self.assertAlmostEqual(result.cursor, .805)
 
+    def test_target_outline_does_not_split_cursor(self):
+        frame = np.array(self.frame())
+        frame[370:373, 17:43] = (80, 140, 80)
+        result = detect(Image.fromarray(frame))
+        self.assertIsNotNone(result)
+        self.assertAlmostEqual(result.cursor, .93)
+        self.assertAlmostEqual(result.cursor_height, .06)
+
 
 if __name__ == '__main__':
     unittest.main()

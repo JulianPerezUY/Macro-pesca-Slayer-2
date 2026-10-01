@@ -5,12 +5,14 @@ Aplicación de escritorio para Windows en Python. Lanza la caña con clic izquie
 ## Uso
 
 1. Abrí `dist/Slayer2Pesca.exe`. No necesita Python instalado.
-2. Abrí Roblox en el monitor principal, equipá la caña y apuntá al agua.
-3. Con el minijuego visible, elegí **Seleccionar barra en pantalla** y arrastrá un rectángulo ajustado alrededor de toda la barra vertical, incluido su borde. No incluyas el porcentaje ni el botón Exit. Esc cancela.
+2. Abrí Roblox, equipá la caña y apuntá al agua.
+3. La aplicación localiza la posición habitual de la barra dentro de la ventana de Roblox automáticamente. No hace falta seleccionar una región.
 4. Pulsá **Activar** o **F8**. Tenés tres segundos para enfocar Roblox. Si el minijuego ya está visible, continúa esa pesca.
 5. **F8** activa/desactiva; **F9** detiene. Al desactivar o cerrar se suelta el clic. Al cambiar de ventana, pausa y suelta el clic; continúa al enfocar Roblox.
 
-La selección inicial corresponde aproximadamente a la captura de referencia de 1920×1080. Seleccioná de nuevo si movés la ventana o cambiás la resolución. El control supone que mantener el clic sube el cuadrado; si lo baja, activá **Invertir control** antes de iniciar. La duración del lanzamiento y la espera máxima del pique son ajustables. La región y el sentido se guardan en `%LOCALAPPDATA%/Slayer2Fishing/settings.json`.
+La posición se calcula respecto al área del juego y se actualiza si movés o redimensionás la ventana. Corresponde al HUD de la captura y el video de referencia, con la barra centrada al 75% del ancho. Mantené toda la ventana visible y el HUD en su distribución habitual. El control estima la velocidad del cuadrado y de la zona para frenar antes de pasar el centro; usa una tolerancia pequeña y captura aproximadamente cada 15 ms más el tiempo de procesamiento. El control supone que mantener el clic sube el cuadrado; si lo baja, activá **Invertir control** antes de iniciar. La duración del lanzamiento y la espera máxima del pique son ajustables. El sentido se guarda en `%LOCALAPPDATA%/Slayer2Fishing/settings.json`; las antiguas selecciones manuales se ignoran.
+
+La interfaz tiene fondo negro, texto blanco y botones, checkbox y bordes de entrada naranjas.
 
 ## Compilar o ejecutar desde Python
 

@@ -9,9 +9,10 @@ import threading
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox
-from PIL import ImageGrab, ImageTk
-from fishing.vision import detect
-from fishing.windows import Mouse, roblox_active, key_down, collect_fish
+from PIL import ImageGrab
+from fishing.vision import detect, automatic_region
+from fishing.control import Controller
+from fishing.windows import Mouse, roblox_active, key_down, collect_fish, game_rect
 
 ctypes.windll.user32.SetProcessDPIAware()
 SETTINGS = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Slayer2Fishing' / 'settings.json'
@@ -24,20 +25,17 @@ class App:
         self.stop.set()
         self.worker = None
         self.events = queue.Queue()
-        self.region = [.733, .29, .766, .66]
         self.invert = tk.BooleanVar(value=False)
         self.cast_seconds = tk.StringVar(value='0.3')
         self.bite_seconds = tk.StringVar(value='45')
         try:
             saved = json.loads(SETTINGS.read_text())
-            region = saved.get('region', self.region)
-            if len(region) == 4 and all(0 <= v <= 1 for v in region) and region[0] < region[2] and region[1] < region[3]:
-                self.region = region
             self.invert.set(bool(saved.get('invert', False)))
         except (OSError, ValueError, TypeError):
             pass
         root.title('Slayer 2 · Pesca')
-        root.geometry('450x390')
+        root.geometry('490x460')
+        self.style(root)
         root.resizable(False, False)
         panel = ttk.Frame(root, padding=22)
         panel.pack(fill='both', expand=True)
@@ -45,8 +43,8 @@ class App:
         ttk.Label(panel, text='Equipá la caña y dejá Roblox visible.\nF8 activa/desactiva · F9 detiene', padding=(0, 12)).pack(anchor='w')
         self.button = ttk.Button(panel, text='Activar (F8)', command=self.toggle)
         self.button.pack(fill='x', pady=6)
-        ttk.Button(panel, text='Seleccionar barra en pantalla', command=self.select_region).pack(fill='x', pady=6)
-        ttk.Checkbutton(panel, text='Invertir control (el clic baja el cuadrado)', variable=self.invert).pack(anchor='w', pady=8)
+        ttk.Label(panel, text='Detección automática de la barra').pack(anchor='w', pady=8)
+        tk.Checkbutton(panel, text='Invertir control (el clic baja el cuadrado)', variable=self.invert, bg='#111111', fg='white', activebackground='#111111', activeforeground='white', selectcolor='#f07820', highlightthickness=0, font=('Segoe UI', 10)).pack(anchor='w', pady=8)
         fields = ttk.Frame(panel)
         fields.pack(fill='x')
         for label, variable in [('Duración del lanzamiento (seg.)', self.cast_seconds), ('Espera máxima del pique (seg.)', self.bite_seconds)]:
@@ -62,7 +60,7 @@ class App:
 
     def save(self):
         SETTINGS.parent.mkdir(parents=True, exist_ok=True)
-        SETTINGS.write_text(json.dumps({'region': self.region, 'invert': self.invert.get()}))
+        SETTINGS.write_text(json.dumps({'invert': self.invert.get()}))
 
     def toggle(self):
         if not self.stop.is_set():
@@ -81,47 +79,56 @@ class App:
             return
         self.stop.clear()
         self.button.configure(text='Desactivar (F8)')
-        self.worker = threading.Thread(target=self.run, args=(tuple(self.region), self.invert.get(), cast, bite), daemon=True)
+        self.worker = threading.Thread(target=self.run, args=(self.invert.get(), cast, bite), daemon=True)
         self.worker.start()
 
-    def run(self, region, invert, cast, bite):
+    def run(self, invert, cast, bite):
         mouse = Mouse()
+        controller = Controller()
         try:
             self.events.put('Activando en 3 segundos: enfocá Roblox y apuntá al agua.')
             if self.stop.wait(3):
                 return
-            screen = ImageGrab.grab()
-            w, h = screen.size
-            bbox = tuple(round(v * (w if i % 2 == 0 else h)) for i, v in enumerate(region))
             state = 'cast'
             deadline = time.monotonic()
-            missing = 0
+            missing_since = None
             while not self.stop.is_set():
                 now = time.monotonic()
                 if not roblox_active():
                     mouse.hold(False)
+                    controller.reset()
+                    missing_since = None
                     self.events.put('Pausado: enfocá Roblox para continuar.')
                     # Suspend timers and reset input when returning to the game.
                     self.stop.wait(.25)
                     deadline += time.monotonic() - now
                     continue
-                result = detect(ImageGrab.grab(bbox=bbox))
+                x, y, width, height = game_rect()
+                if width < 320 or height < 240:
+                    mouse.hold(False)
+                    controller.reset()
+                    deadline += .1
+                    self.stop.wait(.1)
+                    continue
+                left, top, right, bottom = automatic_region(width, height)
+                result = detect(ImageGrab.grab(bbox=(x+left, y+top, x+right, y+bottom)))
                 if result:
                     if state != 'play':
                         state = 'play'
                         deadline = now + 120
                         self.events.put('Pescando: siguiendo la zona verde/amarilla.')
-                    missing = 0
-                    error = result.cursor - result.target
-                    # Screen Y increases downward. Holding normally raises the cursor.
-                    if abs(error) > max(.012, result.target_height * .12):
-                        mouse.hold((error > 0) != invert)
+                    missing_since = None
+                    mouse.hold(controller.update(result, time.monotonic(), mouse.held, invert))
                     if now > deadline:
-                        raise RuntimeError('La barra lleva 120 segundos visible. Revisá la selección y el control.')
+                        raise RuntimeError('La barra lleva 120 segundos visible. Revisá el sentido del control.')
                 elif state == 'play':
                     mouse.hold(False)
-                    missing += 1
-                    if missing >= 12:
+                    controller.reset()
+                    if missing_since is None:
+                        missing_since = now
+                    if now > deadline:
+                        raise RuntimeError('La pesca superó 120 segundos. Revisá el sentido del control.')
+                    if now - missing_since >= .8:
                         state, deadline = 'collect', now + .7
                         self.events.put('Minijuego terminado. Preparando recogida con T…')
                 elif state == 'cast' and now >= deadline:
@@ -132,14 +139,14 @@ class App:
                     state, deadline = 'waiting', time.monotonic() + bite
                     self.events.put('Caña lanzada. Esperando el minijuego…')
                 elif state == 'waiting' and now >= deadline:
-                    raise RuntimeError('No apareció la barra. Revisá la región, la caña y la duración del lanzamiento.')
+                    raise RuntimeError('No apareció la barra. Dejá visible toda la ventana de Roblox y revisá la caña y el lanzamiento.')
                 elif state == 'collect' and now >= deadline:
                     collect_fish(self.stop)
                     state, deadline = 'cooldown', time.monotonic() + 2.5
                     self.events.put('T pulsada. Preparando otro lanzamiento…')
                 elif state == 'cooldown' and now >= deadline:
                     state = 'cast'
-                self.stop.wait(.035)
+                self.stop.wait(.015)
         except Exception as exc:
             self.events.put('Error: ' + str(exc))
         finally:
@@ -147,63 +154,17 @@ class App:
             self.stop.set()
             self.events.put(None)
 
-    def select_region(self):
-        if self.worker and self.worker.is_alive():
-            self.stop.set()
-            self.status.set('Esperá a que se detenga antes de seleccionar.')
-            return
-        self.root.withdraw()
-        self.root.after(250, self.overlay)
-
-    def overlay(self):
-        shot = ImageGrab.grab()
-        w, h = shot.size
-        overlay = tk.Toplevel(self.root)
-        overlay.overrideredirect(True)
-        overlay.geometry(f'{w}x{h}+0+0')
-        overlay.attributes('-topmost', True)
-        canvas = tk.Canvas(overlay, width=w, height=h, cursor='crosshair', highlightthickness=0)
-        canvas.pack()
-        photo = ImageTk.PhotoImage(shot)
-        canvas.create_image(0, 0, anchor='nw', image=photo)
-        canvas.image = photo
-        canvas.create_text(w//2, 40, text='Arrastrá alrededor de TODA la barra vertical (sin el porcentaje). Esc cancela.', fill='white', font=('Segoe UI', 16, 'bold'))
-        start = []
-        rectangle = []
-
-        def finish(event=None):
-            overlay.destroy()
-            self.root.deiconify()
-
-        def press(event):
-            start[:] = [event.x, event.y]
-            if rectangle:
-                canvas.delete(rectangle.pop())
-            rectangle.append(canvas.create_rectangle(event.x, event.y, event.x, event.y, outline='#00ff99', width=3))
-
-        def drag(event):
-            if start:
-                canvas.coords(rectangle[0], *start, event.x, event.y)
-
-        def release(event):
-            if not start:
-                return
-            x1, x2 = sorted([start[0], event.x])
-            y1, y2 = sorted([start[1], event.y])
-            if x2-x1 >= 12 and y2-y1 >= 60:
-                self.region = [x1/w, y1/h, x2/w, y2/h]
-                try:
-                    self.save()
-                    self.status.set('Barra guardada. Podés activar el macro.')
-                except OSError as exc:
-                    self.status.set('No se pudo guardar: ' + str(exc))
-                finish()
-
-        canvas.bind('<ButtonPress-1>', press)
-        canvas.bind('<B1-Motion>', drag)
-        canvas.bind('<ButtonRelease-1>', release)
-        overlay.bind('<Escape>', finish)
-        overlay.focus_force()
+    def style(self, root):
+        root.configure(bg='#111111')
+        style = ttk.Style(root)
+        style.theme_use('clam')
+        style.configure('.', background='#111111', foreground='#ffffff', font=('Segoe UI', 10))
+        style.configure('TFrame', background='#111111')
+        style.configure('TLabel', background='#111111', foreground='#ffffff')
+        style.configure('TButton', background='#e66e19', foreground='#ffffff', bordercolor='#ff8c32', lightcolor='#e66e19', darkcolor='#e66e19', padding=12, font=('Segoe UI', 11, 'bold'))
+        style.map('TButton', background=[('pressed', '#ab4909'), ('active', '#fa8834')], foreground=[('disabled', '#aaaaaa')])
+        style.configure('TEntry', fieldbackground='#202020', foreground='#ffffff', bordercolor='#f07820', insertcolor='#ffffff', lightcolor='#f07820', darkcolor='#f07820', padding=4)
+        style.map('TEntry', bordercolor=[('focus', '#ff9b4b')], lightcolor=[('focus', '#ff9b4b')], darkcolor=[('focus', '#ff9b4b')])
 
     def poll(self):
         pressed = key_down(0x77)
@@ -232,10 +193,14 @@ class App:
 
 if __name__ == '__main__':
     root = tk.Tk()
-    App(root)
+    app = App(root)
     if '--smoke-test' in sys.argv:
-        root.withdraw()
+        app.status.set('Error: No apareció la barra. Dejá visible toda la ventana de Roblox y revisá la caña y el lanzamiento.')
         root.update()
+        panel = root.winfo_children()[0]
+        assert panel.winfo_reqwidth() <= root.winfo_width()
+        assert panel.winfo_reqheight() <= root.winfo_height()
+        assert ttk.Style(root).lookup('TButton', 'background') == '#e66e19'
         root.destroy()
     else:
         root.mainloop()

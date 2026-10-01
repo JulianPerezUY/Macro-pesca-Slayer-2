@@ -8,11 +8,22 @@ class Detection:
     target: float
     cursor: float
     target_height: float
+    cursor_height: float = .05
 
 
 def runs(mask):
     edges = np.diff(np.r_[False, mask, False].astype(int))
     return list(zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)))
+
+
+def joined_runs(mask, max_gap):
+    result = []
+    for a, z in runs(mask):
+        if result and a-result[-1][1] <= max_gap:
+            result[-1] = result[-1][0], z
+        else:
+            result.append((a, z))
+    return result
 
 
 def detect(image):
@@ -28,10 +39,16 @@ def detect(image):
     colored = (g > 55) & (yellow | green) & (rgb.min(axis=2) < 150)
     # The translucent green target tints the white cursor when they overlap.
     white = (rgb.min(axis=2) > 155) & (rgb.max(axis=2) - rgb.min(axis=2) < 85)
-    targets = [(a, z) for a, z in runs(colored.mean(axis=1) > .20) if 8 <= z-a <= h*.45]
-    cursors = [(a, z) for a, z in runs(white.mean(axis=1) > .4) if 7 <= z-a <= h*.15]
+    targets = [(a, z) for a, z in joined_runs(colored.mean(axis=1) > .20, max(1, round(h*.01))) if 8 <= z-a <= h*.45]
+    cursors = [(a, z) for a, z in joined_runs(white.mean(axis=1) > .4, max(1, round(h*.01))) if 7 <= z-a <= h*.15]
     if not targets or not cursors:
         return None
     a, z = max(targets, key=lambda pair: pair[1]-pair[0])
     c, d = max(cursors, key=lambda pair: pair[1]-pair[0])
-    return Detection((a+z)/2/h, (c+d)/2/h, (z-a)/h)
+    return Detection((a+z)/2/h, (c+d)/2/h, (z-a)/h, (d-c)/h)
+
+
+def automatic_region(width, height):
+    """The fishing HUD is anchored at 75% of the Roblox client width."""
+    return tuple(round(v * (width if i % 2 == 0 else height))
+                 for i, v in enumerate((.733, .29, .766, .66)))

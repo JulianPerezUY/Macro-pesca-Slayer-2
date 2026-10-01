@@ -6,12 +6,22 @@ user32 = ctypes.WinDLL('user32', use_last_error=True)
 user32.GetForegroundWindow.restype = wintypes.HWND
 user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
 user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+user32.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
 
 
 def roblox_active():
     title = ctypes.create_unicode_buffer(512)
     user32.GetWindowTextW(user32.GetForegroundWindow(), title, 512)
     return 'roblox' in title.value.lower()
+
+
+def game_rect():
+    window = user32.GetForegroundWindow()
+    rect, origin = wintypes.RECT(), wintypes.POINT()
+    if not user32.GetClientRect(window, ctypes.byref(rect)) or not user32.ClientToScreen(window, ctypes.byref(origin)):
+        raise OSError('No se pudo localizar la ventana de Roblox.')
+    return origin.x, origin.y, rect.right, rect.bottom
 
 
 def key_down(code):
