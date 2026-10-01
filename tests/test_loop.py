@@ -10,7 +10,7 @@ if sys.platform == 'win32':
 
 @unittest.skipUnless(sys.platform == 'win32', 'Windows application')
 class LoopTests(unittest.TestCase):
-    def simulate_three_catches(self, empty=False, retries=False):
+    def simulate_three_catches(self, empty=False, long_hold=False):
         class Clock:
             now = 0.0
             stopped = False
@@ -67,7 +67,7 @@ class LoopTests(unittest.TestCase):
             return None
 
         def received(_):
-            if not empty and game.phase == 'holding' and clock.now-game.stamp >= .8 and (not retries or game.presses >= game.catches*3+3):
+            if not empty and game.phase == 'holding' and clock.now-game.stamp >= (5 if long_hold else .8):
                 game.awarded = True
                 return True
             return False
@@ -76,24 +76,29 @@ class LoopTests(unittest.TestCase):
         app.stop, app.events = clock, queue.Queue()
         app.window_bounds = (0, 0, 400, 400)
         key = Key()
+        moves_while_held = []
+
+        def aim(x, y):
+            if key.held:
+                moves_while_held.append((x, y))
+            game.aim = (x, y)
         with patch.object(main, 'Mouse', side_effect=[Mouse(), key]), \
              patch.object(main, 'roblox_active', return_value=True), \
              patch.object(main, 'game_rect', return_value=(0, 0, 1920, 1012)), \
-             patch.object(main, 'aim_at', side_effect=lambda x,y: setattr(game, 'aim', (x,y))), patch.object(main, 'unlock_cursor'), \
+             patch.object(main, 'aim_at', side_effect=aim), patch.object(main, 'unlock_cursor'), \
              patch.object(main.ImageGrab, 'grab', return_value=object()), \
              patch.object(main, 'detect', side_effect=detection), \
              patch.object(main, 'ReceiptDetector') as receipt, patch.object(main, 'CollectPrompt') as prompt, \
              patch.object(main.time, 'monotonic', side_effect=lambda: clock.now):
             receipt.return_value.visible.side_effect = received
-            prompt.return_value.loading = not retries
             prompt.return_value.locate.side_effect = lambda _, **kwargs: (.5, .5) if game.phase == 'collect' or (game.phase == 'holding' and (not empty or clock.now-game.stamp < .5)) else None
             app.run(False, .3, 5, False, (.5, .4))
         self.assertEqual(game.catches, 1 if empty else 3)
         self.assertEqual(game.casts, 1 if empty else 3)
         self.assertFalse(key.held)
         self.assertTrue(clock.stopped)
-        if retries:
-            self.assertGreaterEqual(game.presses, 9)
+        self.assertEqual(game.presses, 1 if empty else 3)
+        self.assertEqual(moves_while_held, [])
 
     def test_three_complete_catches_then_user_stop(self):
         self.simulate_three_catches()
@@ -101,5 +106,5 @@ class LoopTests(unittest.TestCase):
     def test_missing_receipt_never_recasts(self):
         self.simulate_three_catches(empty=True)
 
-    def test_idle_t_retries_then_three_receipts_continue(self):
-        self.simulate_three_catches(retries=True)
+    def test_long_loading_keeps_one_fixed_click_per_catch(self):
+        self.simulate_three_catches(long_hold=True)
