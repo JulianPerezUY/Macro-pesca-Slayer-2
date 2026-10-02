@@ -4,7 +4,13 @@ Aplicación de escritorio para Windows que lanza la caña, juega el minijuego de
 
 ## Ejecutarlo desde el código
 
-Necesitás Windows y Python 3.12 (o posterior) instalado con **Tcl/Tk**. Desde PowerShell, abrí la carpeta del proyecto y ejecutá:
+Necesitás Windows y Python 3.12 (o posterior) instalado con **Tcl/Tk**. Para instalar Python 3.12 con WinGet, abrí PowerShell y ejecutá:
+
+```powershell
+winget install --exact --id Python.Python.3.12
+```
+
+Después, desde PowerShell en la carpeta del proyecto, prepará el entorno e iniciá la aplicación:
 
 ```powershell
 py -3 -m venv .venv
