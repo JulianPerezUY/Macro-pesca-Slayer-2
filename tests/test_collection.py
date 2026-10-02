@@ -30,14 +30,24 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual(c.update(6.22, False, False, False), 'empty')
         self.assertEqual(c.attempts, 3)
 
-    def test_three_t_attempts_do_not_classify_still_visible_prompt_as_empty(self):
+    def test_three_t_attempts_without_award_recast_even_with_visible_prompt(self):
         c = Collection(0)
         c.update(0, True, False, False)
         c.update(2, True, False, False)
         c.update(2.11, True, False, False)
         c.update(4.11, True, False, False)
         c.update(4.22, True, False, False)
-        self.assertEqual(c.update(6.22, True, False, False), 'retry')
+        self.assertEqual(c.update(6.22, True, False, False), 'empty')
+
+    def test_disappeared_loading_cannot_hold_t_forever(self):
+        c = Collection(0)
+        c.update(0, True, True, False)
+        self.assertEqual(c.update(12, False, False, False), 'retry')
+        c.update(12.11, False, False, False)
+        self.assertEqual(c.update(14.11, False, False, False), 'retry')
+        c.update(14.22, False, False, False)
+        self.assertEqual(c.update(16.23, False, False, False), 'empty')
+        self.assertFalse(c.held)
 
     def test_loading_and_disappearing_prompt_do_not_interrupt_hold(self):
         c = Collection(0)

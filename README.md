@@ -1,73 +1,48 @@
 # Macro de pesca · Slayer 2
 
-Aplicación de escritorio para Windows que lanza la caña, juega el minijuego de pesca y recoge peces u objetos. No mueve al personaje. El código está en este repositorio; el ejecutable se genera aparte y no se guarda en Git.
+Aplicación de escritorio para Windows en Python. Lanza la caña con clic izquierdo, detecta los bordes superior e inferior del rectángulo verde/amarillo y el centro del cuadrado blanco, y mantiene o suelta el clic para dejar el cuadrado dentro del rectángulo. Al terminar el minijuego, mantiene T para recoger peces u objetos: comprueba que empiece a cargar el rombo a los dos segundos y reintenta la pulsación sostenida si no carga. Al registrar una recogida, suelta T y vuelve a lanzar inmediatamente. Si después de tres intentos T no hay una recogida registrada ni `x1`, suelta T y lanza de nuevo. No mueve al personaje.
 
-## Ejecutarlo desde el código
+## Uso
 
-Necesitás Windows y Python 3.12 (o posterior) instalado con **Tcl/Tk**. Para instalar Python 3.12 con WinGet, abrí PowerShell y ejecutá:
+1. Abrí `dist/Slayer2Pesca.exe`. No necesita Python instalado.
+2. Abrí Roblox, equipá la caña y ubicá al personaje junto al agua con agua azul visible en la cámara.
+3. La aplicación localiza la posición habitual de la barra dentro de la ventana de Roblox automáticamente. No hace falta seleccionar una región.
+4. Pulsá **Activar** o **F8**. Tenés tres segundos para enfocar Roblox. Con **Apuntado automático** marcado, pulsa Alt izquierdo antes del primer lanzamiento para liberar el cursor y busca una zona de agua azul despejada. Con el checkbox desmarcado, apunta al punto manual guardado y no pulsa Alt: dejá el cursor libre. Si el minijuego ya está visible, continúa esa pesca sin cambiar el modo del cursor.
+5. Para apuntar manualmente, pulsá **Apuntado manual** al lado del checkbox, enfocá Roblox, ubicá el mouse sobre el agua y pulsá **F6** sin hacer clic. Si el cursor está bloqueado, liberalo con Alt. Tenés 30 segundos; Esc cancela. Al guardar, desmarca el automático y reutiliza ese punto en cada lanzamiento. El punto se escala si movés o redimensionás la ventana; volvé a marcarlo si girás la cámara.
+6. **F8** activa/desactiva; **F9** detiene. Al desactivar o cerrar se sueltan el clic y la T. Al cambiar de ventana, pausa y suelta el clic y la T; continúa al enfocar Roblox.
 
-```powershell
-winget install --exact --id Python.Python.3.12
-```
+La posición se calcula respecto al área del juego y se actualiza si movés o redimensionás la ventana. Corresponde al HUD de la captura y el video de referencia, con la barra centrada al 75% del ancho. Mantené toda la ventana visible y el HUD en su distribución habitual. El control busca el contorno rectangular del objetivo y mide sus bordes superior e inferior, y el centro y tamaño del cuadrado independientemente. Rechaza las manchas verdes del escenario que atraviesan el recorte del HUD; no elige la mayor mancha verde. Las medidas se normalizan al tamaño de la barra. Estos tres valores aparecen en la aplicación junto a una miniatura de la barra con los dos límites naranjas y la línea blanca del centro del cuadrado. Calcula un intervalo seguro considerando el tamaño del cuadrado. Estima la velocidad relativa al objetivo, anticipa la distancia de frenado y reduce la velocidad de aproximación al centro; compensa diferencias persistentes entre subida y caída. La lectura usa captura directa de la región de la barra con MSS y una espera de 2 ms entre iteraciones del minijuego, además del tiempo de captura y procesamiento. Si se pierde una lectura brevemente, frena conservando la velocidad estimada; después de 120 ms sin detección libera el clic y descarta esa estimación. El control supone que mantener el clic sube el cuadrado; si lo baja, activá **Invertir control** antes de iniciar. La duración del lanzamiento y la espera máxima del pique son ajustables antes de iniciar. El modo de apuntado, el punto manual y el sentido se guardan en `%LOCALAPPDATA%/Slayer2Fishing/settings.json`; las antiguas selecciones manuales se ignoran.
 
-Después, desde PowerShell en la carpeta del proyecto, prepará el entorno e iniciá la aplicación:
+La interfaz tiene fondo negro, texto blanco y controles naranjas. Se mantiene siempre encima de Roblox; dejala a un lado para que no cubra la barra ni el aviso T. Al hacer clic en la aplicación se pausa hasta volver a enfocar Roblox. La búsqueda de agua excluye la ventana del macro.
 
-```powershell
-py -3 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe main.py
-```
+## Compilar o ejecutar desde Python
 
-Si ya existe `.venv`, no vuelvas a crearla: ejecutá los dos últimos comandos. La ventana **Slayer 2 · Pesca** debería abrirse. También podés usar `python` en lugar de `py -3` si ese es el comando configurado en tu Windows.
-
-## Crear el ejecutable
-
-Con Python y Tcl/Tk instalados, ejecutá:
+Con Python 3.11 o posterior para Windows instalado (incluyendo Tkinter):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-El script instala las dependencias en `.venv`, corre las pruebas y compila `dist\Slayer2Pesca.exe`. Ese ejecutable es autocontenido y no requiere instalar Python en el equipo donde se use. Si ya se compiló correctamente, podés abrirlo directamente:
+El script crea `.venv`, instala dependencias, ejecuta las pruebas y genera `dist/Slayer2Pesca.exe` mediante PyInstaller. Para ejecutar el código: `.\.venv\Scripts\python.exe main.py`.
 
-```powershell
-.\dist\Slayer2Pesca.exe
-```
+Los binarios generados se excluyen de Git. El workflow de GitHub Actions compila el ejecutable en Windows y lo ofrece como artifact **Slayer2Pesca-Windows** en la pestaña Actions para cada push a `feature/pesca`, `feature/apuntado-y-recoleccion` o `feature/fix-x1-movimientoJG-recuento` y al ejecutarlo manualmente.
 
-También se puede obtener el ejecutable sin compilar: en GitHub abrí **Actions → Compilar Windows**, elegí **Run workflow** con la rama `main`, y al terminar descargá el artifact **Slayer2Pesca-Windows**. Extraé el ZIP y abrí `Slayer2Pesca.exe`.
+## Recolección y recuperación
 
-## Preparar y usar la pesca
+La interfaz muestra el total recogido, un inventario por nombre y el tiempo activo `HH:MM:SS`. Los valores se conservan al desactivar/reactivar y se reinician al cerrar. El tiempo excluye la cuenta regresiva inicial y las pausas fuera de Roblox. El inventario admite desplazamiento con la rueda del mouse cuando hay más de cinco tipos.
 
-1. Abrí Roblox, equipá la caña y orientá la cámara hacia el agua. Dejá visible el área de pesca.
-2. Abrí la aplicación y ubicá su ventana a un costado para que no cubra la barra del minijuego, el aviso **T** ni el mensaje de cantidad.
-3. Elegí el apuntado. **Apuntado automático** viene activado y busca agua azul despejada en la cámara. Si preferís un punto fijo, usá **Apuntado manual**, enfocá Roblox, dejá el cursor sobre el agua y pulsá **F6** sin hacer clic. Tenés 30 segundos para elegir; **Esc** cancela. El punto se guarda y se escala al mover o redimensionar la ventana del juego. Volvé a marcarlo si girás la cámara.
-4. Ajustá **Duración del lanzamiento** si hace falta (de 0,05 a 5 segundos) y **Espera máxima del pique** (de 5 a 180 segundos). Normalmente podés dejar los valores iniciales.
-5. Pulsá **Activar** o **F8** y enfocá Roblox durante la cuenta regresiva de tres segundos. En apuntado automático, el programa usa **Alt izquierdo** para liberar el cursor y busca dónde lanzar. Si Roblox está configurado para reaccionar distinto a Alt, probá el apuntado manual.
-6. Cuando aparezca el minijuego, el programa detecta el rectángulo verde/amarillo y el cuadrado blanco, y mantiene o suelta el clic para conservar el cuadrado dentro del objetivo. La miniatura de la aplicación muestra los límites detectados.
-7. Al terminar, mantiene **T** para recoger. Espera la confirmación visual `x1` antes del siguiente lanzamiento. Si la caña vuelve sin aviso de interacción, reintenta el lanzamiento automáticamente.
+Reconoce las referencias de Pez dorado, Pez payaso, Pez cebra e Hilo de seda y usa el OCR local de Windows para leer otros nombres, como Pez azul o Chatarra. Si la cantidad está confirmada pero no puede leer el nombre, suma a Sin identificar. El OCR necesita un idioma de reconocimiento instalado en Windows; si no está disponible, mantiene la detección visual de las referencias y el total por x1. No envía imágenes a servicios externos.
 
-La barra se localiza dentro de la ventana del juego y se adapta a su tamaño. Conservá el HUD en su disposición habitual y la ventana de Roblox visible. Si no encuentra agua, orientá la cámara hacia una zona azul despejada. Si el clic hace bajar el cuadrado en vez de subirlo, activá **Invertir control** antes de iniciar.
+El aumento del recuento confirma el ciclo: al reconocer un cartel de recompensa, suma una unidad, suelta T y prepara otro lanzamiento aunque no lea x1. Cada ciclo suma una sola vez. Como segunda señal usa nombres de referencia con la tipografía del cartel de recompensa y nombres de peces, Chatarra o Hilo de seda leídos por OCR con ese tamaño de letra. No suma por terminar el minijuego ni por desaparecer T. Relanza en la misma iteración que confirma la recogida, sin pausa de 2,5 segundos ni esperar a que desaparezca el cartel anterior. Evita contar nuevamente un aviso que siga visible. Si x1 confirma un objeto nuevo, la lectura OCR de su nombre continúa en segundo plano después del relanzamiento. La cantidad se reconoce también por contraste local para recuperar letras atenuadas, dentro de una región más amplia para avisos desplazados.
 
-## Teclas y pausa
+Para el lanzamiento inicial y la recuperación sin recogida confirmada, espera 0,6 segundos de estabilidad del escenario, ignorando el agua azul animada. Después de una recogida confirmada, omite esa espera y la pausa de posicionamiento del mouse; reutiliza la captura de confirmación para apuntar y lanzar inmediatamente. Si se mueve la cámara o el personaje, espera; en automático recalcula el agua. Esto evita lanzar durante el desplazamiento, pero no impide los empujones físicos del juego. En manual, marcá nuevamente el punto con F6 si cambia la posición o la cámara.
 
-- **F8**: activar o desactivar el ciclo.
-- **F9**: detenerlo.
-- **F6**: guardar el punto de apuntado manual mientras elegís la ubicación.
-- **Esc**: cancelar la selección manual.
+Cuando aparece el cartel T después del minijuego, envía una entrada de tecla abajo con el código físico de T. La mantiene durante al menos dos segundos antes de reintentar. Si no detecta el rombo cargando, suelta T durante 0,1 segundos y vuelve a mantenerla. Una vez detectada la carga, mantiene T sin repetir entradas; si el cartel vuelve al estado sin carga durante dos segundos, reintenta. Una desaparición del cartel durante la carga no interrumpe la pulsación. El aviso de cantidad (`x1`) o un nombre reconocido en el cartel de recompensa confirma la recogida y actualiza el inventario; ese aumento habilita el siguiente lanzamiento. La detección busca tanto el texto nítido como sus letras blancas atenuadas sobre un panel translúcido.
 
-Al detener, cerrar o cambiar el foco fuera de Roblox, la aplicación suelta el clic y la tecla **T**. Al volver a enfocar Roblox, continúa el ciclo. Las preferencias de apuntado y sentido se guardan en `%LOCALAPPDATA%\Slayer2Fishing\settings.json`.
+Para una vuelta vacía, espera seis segundos desde el final del minijuego sin haber visto un aviso T ni `x1`, y lanza otra vez. Es una inferencia visual por ausencia de aviso, no una lectura del contenido de la caña. Si vio el cartel T, realiza hasta tres intentos de recogida. Si ninguno confirma un objeto, suelta T y relanza incluso si el cartel sigue visible. Cada intento espera dos segundos si no carga; si llegó a cargar, tiene un límite de doce segundos para evitar una espera indefinida. Después de una desaparición, puede repetir T hasta completar esos tres intentos. El margen permite que la caña vuelva antes de relanzar.
 
-## Si algo no funciona
+El clic y la T se liberan al perder el foco de Roblox, detener, cerrar o ante un error. Las pausas no cuentan para el margen de retorno vacío. Al volver a Roblox, detecta el cartel e inicia una nueva pulsación sostenida. Si no aparece el minijuego dentro del tiempo de pique configurado, vuelve a lanzar; si no encuentra agua o la aplicación tapa el punto manual, espera y reintenta.
 
-- **La aplicación no abre desde Python:** comprobá que Python incluya Tcl/Tk y volvé a instalar las dependencias con `python -m pip install -r requirements.txt`.
-- **El ejecutable no aparece:** revisá que `build.ps1` haya terminado sin errores; el archivo queda en `dist\Slayer2Pesca.exe`.
-- **No encuentra el agua:** girá la cámara hacia agua azul despejada o guardá un punto manual con F6.
-- **La barra no se detecta:** dejá todo el HUD visible, sin que lo tape la ventana del macro, y usá la distribución habitual de la interfaz del juego.
-- **El cuadrado se mueve en sentido contrario:** activá **Invertir control**.
-- **La tecla T o el `x1` no se detectan:** mantené visibles el aviso T, el rombo de carga y el mensaje de objeto recibido.
+La detección de agua usa color azul y una zona despejada cerca del centro de la cámara. No gira la cámara para explorar. Si no encuentra agua, orientá la cámara hacia ella. Alt izquierdo es una tecla de alternancia: iniciá con el cursor centrado/bloqueado para que libere el mouse. Mantené visibles la barra, el rombo T y el aviso de cantidad.
 
-Las pruebas automatizadas se ejecutan durante la compilación. Para correrlas por separado:
-
-```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests
-```
+Las pruebas usan recortes de los videos aportados: objetivo amarillo, objetivo verde, cuadrado teñido por el fondo, hojas verdes detrás del HUD y avisos de recogida/carga/`x1`. Cubren distintas escalas, control con inercia y demora de entrada a 30/60 lecturas por segundo, aceleraciones de subida/caída distintas, pulsación continua, reintento tras dos segundos sin carga, relanzamiento después de tres intentos sin confirmar recogida, reconocimiento por nombre sin x1, inventario y tiempo con pausas, estabilidad del escenario, confirmación de peces/objetos y detección de `x1` translúcido.

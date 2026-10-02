@@ -15,6 +15,9 @@ from fishing.control import Controller
 from fishing.scene import CollectPrompt, find_water, manual_target
 from fishing.receipt import ReceiptDetector
 from fishing.collection import Collection
+from fishing.stats import SessionStats, duration
+from fishing.stability import SceneStability
+from fishing.ocr import ItemReader
 from fishing.windows import Mouse, Key, roblox_active, key_down, game_rect, unlock_cursor, aim_at, cursor_position
 
 ctypes.windll.user32.SetProcessDPIAware()
@@ -28,6 +31,7 @@ class App:
         self.stop.set()
         self.worker = None
         self.events = queue.Queue()
+        self.stats = SessionStats()
         self.invert = tk.BooleanVar(value=False)
         self.auto_aim = tk.BooleanVar(value=True)
         self.manual_point = None
@@ -73,6 +77,18 @@ class App:
             ttk.Label(row, text=label).pack(side='left')
             ttk.Entry(row, textvariable=variable, width=8).pack(side='right')
         ttk.Label(panel, text='T mantenida hasta confirmar la recogida · Ciclo continuo', wraplength=440).pack(anchor='w', pady=6)
+        self.stats_total = tk.StringVar(value='Recogidos: 0 · Tiempo activo: 00:00:00')
+        ttk.Label(panel, textvariable=self.stats_total).pack(anchor='w', pady=(8, 3))
+        inventory_panel = ttk.Frame(panel)
+        inventory_panel.pack(fill='x')
+        self.inventory = tk.Listbox(inventory_panel, height=5, bg='#111111', fg='white',
+                                   highlightthickness=0, borderwidth=0,
+                                   font=('Segoe UI', 10))
+        inventory_scroll = ttk.Scrollbar(inventory_panel, orient='vertical', command=self.inventory.yview)
+        inventory_scroll.pack(side='right', fill='y')
+        self.inventory.configure(yscrollcommand=inventory_scroll.set)
+        self.inventory.pack(side='left', fill='x', expand=True)
+        self.inventory.insert('end', 'Todavía no hay recogidas confirmadas.')
         self.tracking = tk.Canvas(panel, height=120, bg='#111111', highlightthickness=0)
         self.tracking.pack(fill='x', pady=(8, 0))
         self.draw_tracking(None)
@@ -117,15 +133,37 @@ class App:
         self.worker = threading.Thread(target=self.run, args=(self.invert.get(), cast, bite, self.auto_aim.get(), self.manual_point), daemon=True)
         self.worker.start()
 
+    def launch(self, mouse, point, origin, cast):
+        if point is None or self.stop.is_set() or not roblox_active():
+            return False
+        aim_at(origin[0]+point[0], origin[1]+point[1])
+        if self.stop.is_set() or not roblox_active():
+            return False
+        try:
+            mouse.hold(True)
+            return not self.stop.wait(cast)
+        finally:
+            mouse.hold(False)
+
+    def resolve_item(self, reader, image, stats):
+        name = reader.name(image)
+        if name:
+            stats.rename_unknown(name)
+            self.events.put(('stats', stats.snapshot()))
+
     def run(self, invert, cast, bite, auto_aim, manual_point):
         mouse = Mouse()
         collect_key = Key(0x54)
         controller = Controller()
         capture = None
+        stats = getattr(self, 'stats', None)
+        if stats is None:
+            stats = self.stats = SessionStats()
         try:
             capture = ScreenCapture()
             prompt = CollectPrompt()
             receipt = ReceiptDetector()
+            item_reader = ItemReader()
             self.events.put('Activando en 3 segundos: enfocá Roblox. Prepararé el lanzamiento elegido.')
             if self.stop.wait(3):
                 return
@@ -135,13 +173,24 @@ class App:
             last_preview = 0.0
             last_prompt_poll = 0.0
             collection = None
+            stability = SceneStability()
+            last_stats = 0.0
+            last_name_poll = 0.0
+            award_latched = False
+            latch_needs_prompt = False
             while not self.stop.is_set():
                 now = time.monotonic()
-                if not roblox_active():
+                active = roblox_active()
+                stats.tick(now, active)
+                if now-last_stats >= .25:
+                    self.events.put(('stats', stats.snapshot()))
+                    last_stats = now
+                if not active:
                     mouse.hold(False)
                     collect_key.hold(False)
                     controller.reset()
                     missing_since = None
+                    stability = SceneStability()
                     if collection is not None:
                         collection.pause(.25)
                     self.events.put('Pausado: enfocá Roblox para continuar.')
@@ -151,6 +200,7 @@ class App:
                     continue
                 x, y, width, height = game_rect()
                 if width < 320 or height < 240:
+                    stats.tick(now, False)
                     mouse.hold(False)
                     collect_key.hold(False)
                     controller.reset()
@@ -160,7 +210,7 @@ class App:
                     self.stop.wait(.1)
                     continue
                 left, top, right, bottom = automatic_region(width, height)
-                result = None if state == 'collect' and collection.held else detect(capture.grab(bbox=(x+left, y+top, x+right, y+bottom)))
+                result = None if state in ('collect', 'cooldown') else detect(capture.grab(bbox=(x+left, y+top, x+right, y+bottom)))
                 if result:
                     collect_key.hold(False)
                     if state != 'play':
@@ -189,6 +239,7 @@ class App:
                     if now - missing_since >= .8:
                         state = 'collect'
                         collection = Collection(now)
+                        collected_before = stats.total
                         self.events.put('Esperando el cartel T para recoger con T mantenida…')
                 elif state == 'prepare':
                     if auto_aim:
@@ -202,8 +253,14 @@ class App:
                 elif state == 'cast' and now >= deadline:
                     app_rect = self.window_bounds
                     excluded = (app_rect[0]-x, app_rect[1]-y, app_rect[2]-x, app_rect[3]-y)
+                    scene = capture.grab(bbox=(x, y, x+width, y+height))
+                    if not stability.ready(scene, now, excluded):
+                        self.events.put('Esperando que se estabilice el personaje/la cámara antes de lanzar…')
+                        deadline = now+.1
+                        self.stop.wait(.015)
+                        continue
                     if auto_aim:
-                        point = find_water(capture.grab(bbox=(x, y, x+width, y+height)), excluded)
+                        point = find_water(scene, excluded)
                     else:
                         try:
                             point = manual_target(width, height, manual_point, excluded)
@@ -223,6 +280,7 @@ class App:
                         break
                     mouse.hold(False)
                     state, deadline = 'waiting', time.monotonic() + bite
+                    stability = SceneStability()
                     self.events.put('Caña lanzada. Esperando el minijuego…')
                 elif state == 'waiting' and now >= deadline:
                     state, deadline = 'cooldown', now+2.5
@@ -231,32 +289,75 @@ class App:
                     if now-last_prompt_poll >= .1:
                         last_prompt_poll = now
                         scene = capture.grab(bbox=(x, y, x+width, y+height))
-                        received = receipt.visible(scene)
+                        candidate = receipt.visible(scene) or receipt.named_award(scene)
+                        if not candidate and not latch_needs_prompt:
+                            award_latched = False
+                        received = candidate and not award_latched
                         position = None if received else prompt.locate(scene)
-                        action = collection.update(time.monotonic(), position is not None,
-                                                   prompt.loading, received)
+                        if award_latched and latch_needs_prompt and position is not None:
+                            award_latched = False
+                            latch_needs_prompt = False
+                        used_ocr = False
+                        if not received and not award_latched and position is None and now-last_name_poll >= 1:
+                            last_name_poll = now
+                            name = item_reader.award_name(scene)
+                            if name:
+                                receipt.item_name, receipt.confirmation = name, 'nombre'
+                                received = True
+                                used_ocr = True
                         if not roblox_active() or self.stop.is_set():
                             collect_key.hold(False)
                             collection.pause(0)
                             continue
+                        if received and stats.total == collected_before:
+                            collect_key.hold(False)
+                            item = receipt.item_name
+                            stats.record(item if isinstance(item, str) else 'Sin identificar')
+                            self.events.put(('stats', stats.snapshot()))
+                        # A confirmed increment is enough, even without x1.
+                        action = collection.update(time.monotonic(), position is not None,
+                                                   prompt.loading, stats.total > collected_before)
                         collect_key.hold(collection.held)
                         if action == 'received':
-                            state, deadline = 'cooldown', time.monotonic()+2.5
-                            self.events.put('Objeto recibido: detectado x1. Volviendo a pescar…')
+                            award_latched = True
+                            latch_needs_prompt = used_ocr
+                            app_rect = self.window_bounds
+                            excluded = (app_rect[0]-x, app_rect[1]-y, app_rect[2]-x, app_rect[3]-y)
+                            # Reuse this frame: no cooldown, stability wait or OCR
+                            # naming step may delay a confirmed catch's next cast.
+                            point = find_water(scene, excluded) if auto_aim else manual_target(width, height, manual_point, excluded)
+                            if self.launch(mouse, point, (x, y), cast):
+                                state, deadline = 'waiting', time.monotonic()+bite
+                                stability = SceneStability()
+                                self.events.put('Recogida confirmada. Caña relanzada; esperando el minijuego…')
+                            else:
+                                state, deadline = 'cast', time.monotonic()
+                            if receipt.item_name == 'Sin identificar' and receipt.name_image is not None:
+                                threading.Thread(target=self.resolve_item,
+                                                 args=(item_reader, receipt.name_image, stats),
+                                                 daemon=True).start()
                         elif action == 'empty':
                             state, deadline = 'cast', time.monotonic()
-                            self.events.put('Caña sin aviso de recogida. Volviendo a lanzar…')
+                            self.events.put('Sin recogida confirmada tras tres intentos. Volviendo a lanzar…'
+                                            if collection.attempts >= 3 else 'Caña sin aviso de recogida. Volviendo a lanzar…')
                         elif action == 'retry':
                             self.events.put('La T no carga: soltando y reintentando una pulsación sostenida…')
                         elif action == 'holding':
-                            self.events.put('T mantenida: comprobando el rombo y esperando x1…')
+                            self.events.put('T mantenida: esperando una recogida registrada o x1…')
                 elif state == 'cooldown' and now >= deadline:
                     collect_key.hold(False)
-                    state = 'cast'
+                    # Do not start another cycle while the previous x1 persists.
+                    scene = capture.grab(bbox=(x, y, x+width, y+height))
+                    if receipt.visible(scene) or receipt.named_award(scene):
+                        deadline = now+.1
+                    else:
+                        state = 'cast'
                 self.stop.wait(.002 if state == 'play' else .015)
         except Exception as exc:
             self.events.put('Error: ' + str(exc))
         finally:
+            stats.tick(time.monotonic(), False)
+            self.events.put(('stats', stats.snapshot()))
             collect_key.hold(False)
             mouse.hold(False)
             if capture is not None:
@@ -353,6 +454,14 @@ class App:
                     self.status.set('Desactivado')
             elif hasattr(event, 'target_top'):
                 self.draw_tracking(event)
+            elif isinstance(event, tuple) and event[0] == 'stats':
+                seconds, items = event[1]
+                self.stats_total.set(f'Recogidos: {sum(items.values())} · Tiempo activo: {duration(seconds)}')
+                self.inventory.delete(0, 'end')
+                for name, count in sorted(items.items()):
+                    self.inventory.insert('end', f'{name}: {count}')
+                if not items:
+                    self.inventory.insert('end', 'Todavía no hay recogidas confirmadas.')
             else:
                 self.status.set(event)
         self.root.after(60, self.poll)
@@ -371,6 +480,13 @@ if __name__ == '__main__':
     if '--smoke-test' in sys.argv:
         CollectPrompt()
         ReceiptDetector()
+        assert ItemReader().script.is_file()
+        app.events.put(('stats', (3661, {'Pez azul': 1, 'Chatarra': 20,
+                                      'Pez dorado': 2, 'Pez payaso': 3,
+                                      'Hilo de seda': 4, 'Pez cebra': 1})))
+        app.poll()
+        assert app.inventory.size() == 6
+        assert app.stats_total.get() == 'Recogidos: 31 · Tiempo activo: 01:01:01'
         capture = ScreenCapture()
         try:
             assert capture.grab((0, 0, 16, 16)).size == (16, 16)

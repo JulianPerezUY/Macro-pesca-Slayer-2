@@ -5,6 +5,7 @@ class Collection:
     CHECK_SECONDS = 2.0
     RELEASE_SECONDS = .1
     EMPTY_SECONDS = 6.0
+    MAX_HOLD_SECONDS = 12.0
 
     def __init__(self, now):
         self.started = now
@@ -30,7 +31,7 @@ class Collection:
         if not self.seen and now-self.started >= self.EMPTY_SECONDS:
             return 'empty'
         if not self.held:
-            if visible and now >= self.retry_at:
+            if (visible or self.seen) and now >= self.retry_at:
                 self.held = True
                 self.loading = bool(loading)
                 self.pressed_at = now
@@ -47,11 +48,12 @@ class Collection:
             self.idle_since = None
         failed_start = not self.loading and now-self.pressed_at >= self.CHECK_SECONDS
         stalled = self.idle_since is not None and now-self.idle_since >= self.CHECK_SECONDS
-        if failed_start or stalled:
+        timed_out = now-self.pressed_at >= self.MAX_HOLD_SECONDS
+        if failed_start or stalled or timed_out:
             self.held = False
             self.loading = False
             self.attempts += 1
-            if self.attempts >= 3 and not visible:
+            if self.attempts >= 3:
                 return 'empty'
             self.retry_at = now+self.RELEASE_SECONDS
             return 'retry'

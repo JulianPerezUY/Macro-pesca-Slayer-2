@@ -1,7 +1,7 @@
 name: Compilar Windows
 on:
   push:
-    branches: [feature/pesca, feature/apuntado-y-recoleccion]
+    branches: [feature/pesca, feature/apuntado-y-recoleccion, feature/fix-x1-movimientoJG-recuento]
   workflow_dispatch:
 permissions:
   contents: read
